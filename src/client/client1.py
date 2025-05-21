@@ -1,11 +1,36 @@
 import asyncio
 import websockets
+import json
+import os
 
+CONFIG_FILE = 'client.config'
 
-async def ws_client(url, username, password):
+async def ws_client(url):
+    # 检查是否存在配置文件
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+        user_id = config['user_id']
+        password = config['password']
+        print("Using saved user ID and password for login.")
+    else:
+        user_id = input("Enter your user ID: ")
+        password = input("Enter your password: ")
+
     async with websockets.connect(url) as websocket:
         # Authenticate with the server
-        await websocket.send(f"{username}:{password}")
+        await websocket.send(f"{user_id}:{password}")
+        response = await websocket.recv()
+        if response == "LOGIN_SUCCESS":
+            print("Login successful.")
+        elif response == "REGISTERED":
+            print("Registration successful. Saving user ID and password for future logins.")
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump({'user_id': user_id, 'password': password}, f)
+        else:
+            print("Invalid user ID or password.")
+            return
+
         # 创建一个队列用于存储接收到的消息
         message_queue = asyncio.Queue()
 
@@ -16,31 +41,29 @@ async def ws_client(url, username, password):
 
         # 启动一个任务用于处理用户输入
         asyncio.create_task(handle_user_input(websocket))
+        # 启动一个任务用于发送心跳包
+        asyncio.create_task(heart_beat(websocket))
 
         # 等待队列中的消息并打印
         while True:
             message = await message_queue.get()
             print(message)
 
-
 async def receive_messages(websocket, message_queue):
     try:
         async for message in websocket:
-            if message.startswith("session_id:"):
-                # Store the session ID for future use
-                session_id = message.split(":")[1]
-                print(f"Received session ID: {session_id}")
-                continue  # Ignore session ID messages
-             # 消息格式为 "sender_username: message"
-            sender, msg = message.split(": ", 1)
-            if sender == username:
-                print(f"You: {msg}")
+            # 如果是心跳包或心跳响应，则忽略
+            if message in ['heartbeat', 'heartbeat_ack']:
+                continue
+            # 消息格式为 "sender_user_id:sender_username:message"
+            sender_user_id, sender_username, msg = message.split(":", 2)
+            if sender_user_id == user_id:
+                await message_queue.put(f"You: {msg}")
             else:
-                await message_queue.put(f"{sender}: {msg}")
+                await message_queue.put(f"{sender_username}: {msg}")
     except websockets.ConnectionClosed:
         print("Connection closed. Exiting...")
         asyncio.get_event_loop().stop()
-
 
 async def handle_user_input(websocket):
     while True:
@@ -49,9 +72,12 @@ async def handle_user_input(websocket):
         # Send the message to the server
         await websocket.send(message)
 
+async def heart_beat(websocket):
+    while True:
+        # 发送心跳包
+        await asyncio.sleep(30)
+        await websocket.send('heartbeat')
 
 if __name__ == "__main__":
     url = 'ws://localhost:9998'
-    username = input("Enter your username: ")
-    password = input("Enter your password: ")
-    asyncio.run(ws_client(url, username, password))
+    asyncio.run(ws_client(url))
