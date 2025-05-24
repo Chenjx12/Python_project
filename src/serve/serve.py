@@ -4,7 +4,6 @@ import websockets
 import logging
 import sqlite3
 import time
-import uuid
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,7 +19,7 @@ conn = sqlite3.connect('clients.db')
 cursor = conn.cursor()
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS clients (
-    user_id TEXT PRIMARY KEY,
+    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL,
     password TEXT NOT NULL
 )
@@ -28,7 +27,7 @@ CREATE TABLE IF NOT EXISTS clients (
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender_id TEXT,
+    sender_id INTEGER,
     sender_username TEXT,
     message TEXT,
     timestamp TEXT,
@@ -56,10 +55,16 @@ def authenticate_client(user_id, password):
     return cursor.fetchone() is not None
 
 # 注册新客户端
-def register_client(username, password):
-    user_id = str(uuid.uuid4())  # 生成唯一ID
-    cursor.execute("INSERT INTO clients (user_id, username, password) VALUES (?, ?, ?)", (user_id, username, password))
-    conn.commit()
+def register_client(username, password) -> int:
+    """创建新用户，并返回自增 ID"""
+    try:
+        # 插入用户数据
+        cursor.execute('INSERT INTO clients (username, password) VALUES (?, ?)', (username, password))
+        user_id = cursor.lastrowid  # 获取自增 ID
+        conn.commit()
+    except sqlite3.IntegrityError as e:
+        logging.info(f"Error: {e}")
+        user_id = None
     return user_id
 
 # 获取用户的离线消息
@@ -91,15 +96,26 @@ async def send_heartbeats():
 # WebSocket连接处理函数
 async def handler(websocket):
     # 验证客户端
-    auth_message = await websocket.recv()
-    user_id, password = auth_message.split(":")
-    if authenticate_client(user_id, password):
-        logging.info(f"客户端已登录：{user_id}")
-    else:
-        logging.info(f"用户ID或密码错误：{user_id}")
-        await websocket.send("LOGIN_FAIL")
-        await websocket.close()
-        return
+    login_or_sign = await  websocket.recv()
+    if login_or_sign == 'Login':
+        auth_message = await websocket.recv()
+        user_id, password = auth_message.split(":")
+        if authenticate_client(user_id, password):
+            await websocket.send('LOGIN_SUCCESS')
+            logging.info(f"客户端已登录：{user_id}")
+        else:
+            logging.info(f"用户ID或密码错误：{user_id}")
+            await websocket.send("LOGIN_FAIL")
+            await websocket.close()
+            return
+    elif login_or_sign == 'Sign':
+        logging.info('new user sign up.')
+        auth_message = await websocket.recv()
+        sign_msg,user_name, password = auth_message.split(":")
+        user_id = register_client(user_name, password)
+        await websocket.send(f'{user_id}')
+        await websocket.send('REGISTERED')
+        logging.info(f'register user with id:{user_id}')
 
     # 存储客户端的用户ID
     connected_clients[user_id] = websocket
@@ -122,15 +138,22 @@ async def handler(websocket):
                 # 更新心跳时间
                 client_heartbeats[user_id] = time.time()
                 continue  # 不处理心跳包，直接跳过
-
-            # 记录收到的消息
-            logging.info(f"从客户端 {user_id} 收到消息：{message}")
-            # 将消息存储到数据库
-            cursor.execute("SELECT username FROM clients WHERE user_id = ?", (user_id,))
-            sender_username = cursor.fetchone()[0]
-            store_message(user_id, sender_username, message)
-            # 将消息广播给所有已连接的客户端
-            await broadcast(user_id, sender_username, message)
+            elif message.startswith('sign_msg'):
+                # 用户注册信息不应该广播……
+                pass
+            elif message.startswith('login_msg'):
+                # 用户登录信息
+                user_login_name = message.split(':')[2]
+                await broadcast(0, user_login_name, f'用户{user_login_name}已上线')
+            else:
+                # 记录收到的消息
+                logging.info(f"从客户端 {user_id} 收到消息：{message}")
+                # 将消息存储到数据库
+                cursor.execute("SELECT username FROM clients WHERE user_id = ?", (user_id,))
+                sender_username = cursor.fetchone()[0]
+                store_message(user_id, sender_username, message)
+                # 将消息广播给所有已连接的客户端
+                await broadcast(user_id, sender_username, message)
     except websockets.ConnectionClosed as e:
         # 记录连接关闭事件
         logging.info(f"客户端连接已关闭 (用户ID：{user_id})：{e}")

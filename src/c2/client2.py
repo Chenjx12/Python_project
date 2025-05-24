@@ -5,19 +5,27 @@ import os
 
 CONFIG_FILE = 'client.config'
 
-async def ws_client(url):
-    # 检查是否存在配置文件
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
-            config = json.load(f)
-        user_id = config['user_id']
-        password = config['password']
-        print("Using saved user ID and password for login.")
-    else:
-        user_id = input("Enter your user ID: ")
-        password = input("Enter your password: ")
+user_id = ''
 
+async def ws_client(url):
     async with websockets.connect(url) as websocket:
+        # 检查是否存在配置文件
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+            user_id = config['user_id']
+            password = config['password']
+            await websocket.send('Login')
+            print("Using saved user ID and password for login.")
+        else:
+            await websocket.send('Sign')
+            print('First login with sign.')
+            username = input("Enter your username: ")
+            password = input("Enter your password: ")
+            await websocket.send(f"sign_msg:{username}:{password}")
+            user_id = await websocket.recv()
+            print(f'Your user id is:{user_id}')
+
         # Authenticate with the server
         await websocket.send(f"{user_id}:{password}")
         response = await websocket.recv()
@@ -26,7 +34,7 @@ async def ws_client(url):
         elif response == "REGISTERED":
             print("Registration successful. Saving user ID and password for future logins.")
             with open(CONFIG_FILE, 'w') as f:
-                json.dump({'user_id': user_id, 'password': password}, f)
+                json.dump({'user_id': user_id, 'username': username, 'password': password}, f)
         else:
             print("Invalid user ID or password.")
             return
