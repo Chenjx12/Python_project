@@ -14,6 +14,7 @@ async def ws_client(url):
             with open(CONFIG_FILE, 'r') as f:
                 config = json.load(f)
             user_id = config['user_id']
+            username = config['username']
             password = config['password']
             await websocket.send('Login')
             print("Using saved user ID and password for login.")
@@ -27,7 +28,7 @@ async def ws_client(url):
             print(f'Your user id is:{user_id}')
 
         # Authenticate with the server
-        await websocket.send(f"{user_id}:{password}")
+        await websocket.send(f"login_msg:{user_id}:{username}:{password}")
         response = await websocket.recv()
         if response == "LOGIN_SUCCESS":
             print("Login successful.")
@@ -67,6 +68,8 @@ async def receive_messages(websocket, message_queue):
             sender_user_id, sender_username, msg = message.split(":", 2)
             if sender_user_id == user_id:
                 await message_queue.put(f"You: {msg}")
+            elif sender_user_id == '0':
+                await message_queue.put(f"server: {msg}")
             else:
                 await message_queue.put(f"{sender_username}: {msg}")
     except websockets.ConnectionClosed:

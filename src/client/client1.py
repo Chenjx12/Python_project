@@ -14,6 +14,7 @@ async def ws_client(url):
             with open(CONFIG_FILE, 'r') as f:
                 config = json.load(f)
             user_id = config['user_id']
+            username = config['username']
             password = config['password']
             await websocket.send('Login')
             print("Using saved user ID and password for login.")

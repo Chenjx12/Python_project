@@ -4,6 +4,10 @@ import websockets
 import logging
 import sqlite3
 import time
+import os
+import hashlib
+
+from src.serve.view_clients import username
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,7 +25,8 @@ cursor.execute('''
 CREATE TABLE IF NOT EXISTS clients (
     user_id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL,
-    password TEXT NOT NULL
+    password_hash TEXT NOT NULL,  -- 存储密码的哈希值
+    salt TEXT NOT NULL            -- 存储盐值
 )
 ''')
 cursor.execute('''
@@ -50,16 +55,27 @@ async def check_client_heartbeats():
         await asyncio.sleep(10)  # 每10秒检查一次
 
 # 验证客户端的用户ID和密码
-def authenticate_client(user_id, password):
-    cursor.execute("SELECT user_id FROM clients WHERE user_id = ? AND password = ?", (user_id, password))
-    return cursor.fetchone() is not None
+def authenticate_client(user_id, password) -> bool:
+    cursor.execute("SELECT password_hash, salt FROM clients WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    if result:
+        password_hash, salt = result
+        # 将输入的密码与盐值拼接后进行哈希处理
+        input_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+        # 比较哈希值
+        return input_hash == password_hash
+    return False
 
 # 注册新客户端
 def register_client(username, password) -> int:
     """创建新用户，并返回自增 ID"""
     try:
+        # 生成随机盐值
+        salt = os.urandom(16).hex()  # 生成16字节的随机盐值并转换为十六进制字符串
+        # 将密码与盐值拼接后进行哈希处理
+        password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
         # 插入用户数据
-        cursor.execute('INSERT INTO clients (username, password) VALUES (?, ?)', (username, password))
+        cursor.execute('INSERT INTO clients (username, password_hash, salt) VALUES (?, ?, ?)', (username, password_hash, salt))
         user_id = cursor.lastrowid  # 获取自增 ID
         conn.commit()
     except sqlite3.IntegrityError as e:
@@ -99,7 +115,7 @@ async def handler(websocket):
     login_or_sign = await  websocket.recv()
     if login_or_sign == 'Login':
         auth_message = await websocket.recv()
-        user_id, password = auth_message.split(":")
+        lg_msg, user_id, username, password = auth_message.split(":")
         if authenticate_client(user_id, password):
             await websocket.send('LOGIN_SUCCESS')
             logging.info(f"客户端已登录：{user_id}")
