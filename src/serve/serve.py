@@ -7,7 +7,7 @@ import time
 import os
 import hashlib
 
-from src.serve.view_clients import username
+# from src.serve.view_clients import username
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
