@@ -5,14 +5,16 @@ import os
 import ssl
 
 CONFIG_FILE = 'client.config'
+current_dir = os.getcwd()
+cert_path = os.path.join(current_dir, 'source', 'cert.pem')
 
 user_id = ''
 
 async def ws_client(url):
-    # 创建 SSL 上下文并忽略证书验证
+    # 创建 SSL 上下文
     ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False  # 忽略主机名验证
-    ssl_context.verify_mode = ssl.CERT_NONE  # 忽略证书验证
+    ssl_context.load_verify_locations(cert_path)  # 加载服务器证书
+    ssl_context.verify_mode = ssl.CERT_REQUIRED  # 要求验证服务器证书
 
     async with websockets.connect(url, ssl=ssl_context) as websocket:
         # 检查是否存在配置文件
