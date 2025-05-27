@@ -11,6 +11,7 @@ import ssl
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# ssl证书
 current_dir = os.path.dirname(os.path.abspath(__file__))
 cert_path = os.path.join(current_dir, 'serve_source', 'cert.pem')
 key_path = os.path.join(current_dir, 'serve_source', 'key.pem')
