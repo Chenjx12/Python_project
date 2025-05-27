@@ -106,58 +106,62 @@ async def send_heartbeats():
 
 # WebSocket连接处理函数
 async def handler(websocket):
-    login_or_sign = await websocket.recv()
-    if login_or_sign == 'Login':
-        auth_message = await websocket.recv()
-        lg_msg, user_id, username, password = auth_message.split(":")
-        if authenticate_client(user_id, password):
-            await websocket.send('LOGIN_SUCCESS')
-            logging.info(f"客户端已登录：{user_id}")
-        else:
-            logging.info(f"用户ID或密码错误：{user_id}")
-            await websocket.send("LOGIN_FAIL")
-            await websocket.close()
-            return
-    elif login_or_sign == 'Sign':
-        logging.info('new user sign up.')
-        auth_message = await websocket.recv()
-        sign_msg, user_name, password = auth_message.split(":")
-        user_id = register_client(user_name, password)
-        await websocket.send(f'{user_id}')
-        await websocket.send('REGISTERED')
-        logging.info(f'register user with id:{user_id}')
-
-    connected_clients[user_id] = websocket
-    client_heartbeats[user_id] = time.time()
-
-    offline_msgs = get_offline_messages(user_id)
-    for message in offline_msgs:
-        await websocket.send(message)
-        logging.info(f"向客户端 {user_id} 发送离线消息：{message}")
-
+    user_id = None
     try:
-        async for message in websocket:
-            if message == 'heartbeat':
-                logging.info(f"从客户端 {user_id} 收到心跳包")
-                client_heartbeats[user_id] = time.time()
-                continue
-            elif message.startswith('sign_msg'):
-                pass
-            elif message.startswith('login_msg'):
-                user_login_name = message.split(':')[2]
-                await broadcast(0, user_login_name, f'用户{user_login_name}已上线')
+        login_or_sign = await websocket.recv()
+        if login_or_sign == 'Login':
+            auth_message = await websocket.recv()
+            lg_msg, user_id, username, password = auth_message.split(":")
+            if authenticate_client(user_id, password):
+                await websocket.send('LOGIN_SUCCESS')
+                logging.info(f"客户端已登录：{user_id}")
             else:
-                logging.info(f"从客户端 {user_id} 收到消息：{message}")
-                cursor.execute("SELECT username FROM clients WHERE user_id = ?", (user_id,))
-                sender_username = cursor.fetchone()[0]
-                store_message(user_id, sender_username, message)
-                await broadcast(user_id, sender_username, message)
-    except websockets.ConnectionClosed as e:
-        logging.info(f"客户端连接已关闭 (用户ID：{user_id})：{e}")
+                logging.info(f"用户ID或密码错误：{user_id}")
+                await websocket.send("LOGIN_FAIL")
+                await websocket.close()
+                return
+        elif login_or_sign == 'Sign':
+            logging.info('new user sign up.')
+            auth_message = await websocket.recv()
+            sign_msg, user_name, password = auth_message.split(":")
+            user_id = register_client(user_name, password)
+            await websocket.send(f'{user_id}')
+            await websocket.send('REGISTERED')
+            logging.info(f'register user with id:{user_id}')
+
+        if user_id is not None:
+            connected_clients[user_id] = websocket
+            client_heartbeats[user_id] = time.time()
+
+            offline_msgs = get_offline_messages(user_id)
+            for message in offline_msgs:
+                await websocket.send(message)
+                logging.info(f"向客户端 {user_id} 发送离线消息：{message}")
+
+            try:
+                async for message in websocket:
+                    if message == 'heartbeat':
+                        logging.info(f"从客户端 {user_id} 收到心跳包")
+                        client_heartbeats[user_id] = time.time()
+                        continue
+                    elif message.startswith('sign_msg'):
+                        pass
+                    elif message.startswith('login_msg'):
+                        user_login_name = message.split(':')[2]
+                        await broadcast(0, user_login_name, f'用户{user_login_name}已上线')
+                    else:
+                        logging.info(f"从客户端 {user_id} 收到消息：{message}")
+                        cursor.execute("SELECT username FROM clients WHERE user_id = ?", (user_id,))
+                        sender_username = cursor.fetchone()[0]
+                        store_message(user_id, sender_username, message)
+                        await broadcast(user_id, sender_username, message)
+            except websockets.ConnectionClosed as e:
+                logging.info(f"客户端连接已关闭 (用户ID：{user_id})：{e}")
     finally:
-        connected_clients.pop(user_id, None)
-        client_heartbeats.pop(user_id, None)
-        logging.info(f"已将客户端从连接列表中移除 (用户ID：{user_id})")
+        if user_id is not None:
+            connected_clients.pop(user_id, None)
+            client_heartbeats.pop(user_id, None)
+            logging.info(f"已将客户端从连接列表中移除 (用户ID：{user_id})")
 
 # 广播消息给所有已连接的客户端
 async def broadcast(sender_user_id, sender_username, message):
