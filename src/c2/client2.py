@@ -5,6 +5,7 @@ import os
 import ssl
 
 CONFIG_FILE = 'client.config'
+
 current_dir = os.getcwd()
 cert_path = os.path.join(current_dir, 'source', 'cert.pem')
 
