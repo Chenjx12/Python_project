@@ -12,6 +12,7 @@ cert_path = os.path.join(current_dir, 'source', 'cert.pem')
 user_id = ''
 
 async def ws_client(url):
+    global user_id
     # 创建 SSL 上下文
     ssl_context = ssl.create_default_context()
     ssl_context.load_verify_locations(cert_path)  # 加载服务器证书
@@ -88,7 +89,7 @@ async def receive_messages(websocket, message_queue):
 async def handle_user_input(websocket):
     while True:
         # Get user input in a separate thread to avoid blocking the event loop
-        message = await asyncio.get_event_loop().run_in_executor(None, input)
+        message = await asyncio.get_event_loop().run_in_executor(None, input, '')
         # Send the message to the server
         await websocket.send(message)
 
