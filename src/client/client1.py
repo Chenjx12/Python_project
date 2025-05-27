@@ -2,13 +2,21 @@ import asyncio
 import websockets
 import json
 import os
+import ssl
 
 CONFIG_FILE = 'client.config'
+current_dir = os.getcwd()
+cert_path = os.path.join(current_dir, 'source', 'cert.pem')
 
 user_id = ''
 
 async def ws_client(url):
-    async with websockets.connect(url) as websocket:
+    # 创建 SSL 上下文
+    ssl_context = ssl.create_default_context()
+    ssl_context.load_verify_locations(cert_path)  # 加载服务器证书
+    ssl_context.verify_mode = ssl.CERT_REQUIRED  # 要求验证服务器证书
+
+    async with websockets.connect(url, ssl=ssl_context) as websocket:
         # 检查是否存在配置文件
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
@@ -90,5 +98,6 @@ async def heart_beat(websocket):
         await websocket.send('heartbeat')
 
 if __name__ == "__main__":
-    url = 'ws://localhost:9998'
+    # 使用 wss:// 协议连接到服务器
+    url = 'wss://localhost:9998'
     asyncio.run(ws_client(url))
