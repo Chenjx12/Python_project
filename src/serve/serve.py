@@ -139,8 +139,13 @@ async def handler(websocket):
                     username = msg['name']
                     password = msg['message']
                     user_id = register_client(username, password)
-                    await websocket.send(json_create(2, user_id, username, 'REGISTERED', now()))
-                    logging.info(f'register user with id:{user_id}')
+                    if user_id is not None:
+                        await websocket.send(json_create(2, user_id, username, 'REGISTERED', now()))
+                        logging.info(f'register user with id:{user_id}')
+                    else:
+                        await websocket.send(json_create(2, user_id, username, 'REGISTERED_FAIL', now()))
+                        logging.info(f"注册请求失败")
+
 
 
                 elif flag == 5 and user_id is not None:  # 同步离线消息

@@ -79,20 +79,23 @@ async def ws_client(url):
             password = input("Enter your password: ")
             await websocket.send(json_create(2, 0, username, password, now()))
             rcv = await websocket.recv()
-            user_id = json.loads(rcv)['id']
+            rcv = json.loads(rcv)
+            if rcv['message'] != 'REGISTERED':
+                return
+
+            user_id = rcv['id']
             print(f'Your user id is:{user_id}')
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump({'user_id': user_id, 'username': username, 'password': password, 'time': -1}, f)
             await websocket.send(json_create(1, user_id, username, password, now()))
 
 
         # Authenticate with the server
 
         response = await websocket.recv()
+        response = json.loads(response)['message']
         if response == "LOGIN_SUCCESS":
             print("Login successful.")
-        elif response == "REGISTERED":
-            print("Registration successful. Saving user ID and password for future logins.")
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump({'user_id': user_id, 'username': username, 'password': password, 'time':-1}, f)
         else:
             print("Invalid user ID or password.")
             return
@@ -132,7 +135,6 @@ async def receive_messages(websocket, message_queue):
                 sql.exec("INSERT INTO messages (sender_id, sender_username, message, timestamp) VALUES (?,?,?,?)",
                                (msg['id'], msg['name'], msg['message'], msg['timestamp']))
                 await message_queue.put(f"[离线] {msg['name']}: {msg['message']}")
-
             elif msg['flag'] == 7:
                 update_time(msg['timestamp'])
                 print("[系统] 离线消息同步完成。")
