@@ -1,15 +1,74 @@
 import asyncio
 import websockets
 import json
+import sqlite3
+import logging
+from datetime import datetime
 import os
 import ssl
 
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 CONFIG_FILE = 'client.config'
 
 current_dir = os.getcwd()
 cert_path = os.path.join(current_dir, 'source', 'cert.pem')
 
 user_id = ''
+
+# conn = sqlite3.connect('basedata.db', detect_types=sqlite3.PARSE_DECLTYPES)
+conn = sqlite3.connect('basedata.db')
+cursor = conn.cursor()
+
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_id INTEGER,
+    sender_username TEXT,
+    message TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+''')
+#图片存储数据表，用于后续对接消息内部图片id（由于整体兼容性问题，message的结构可能需要加上首部检测来尽可能不更改当前的数据表结构），
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS pictures (
+    pic_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    address TEXT
+)
+''')
+
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_name TEXT
+)
+''')
+
+
+#用于同步离线信息
+async def refresh_message(websocket):
+    pass
+    with open(CONFIG_FILE, 'r') as f:
+        time = json.load(f)['time']
+    if time == -1 :
+        return
+    await websocket.send(time)
+    async for msg in websocket:
+        rcv = json.loads(msg)
+        # cursor.execute("select user_name from users where user_id = ?", rcv[0])
+        # res = cursor.fetchall()
+        cursor.execute("insert into messages(sender_id, sender_username, message, timestamp) values(?,?,?,?)", (rcv['id'], rcv['name'], rcv['message'], rcv['timestamp']))
+    cursor.execute("")
+
+    pass
+
+def update_time(timestamp):
+    with open(CONFIG_FILE, 'r') as f:
+        data = json.load(f)
+    data['time'] = timestamp
+
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(data, f)
 
 async def ws_client(url):
     global user_id
@@ -35,6 +94,7 @@ async def ws_client(url):
             password = input("Enter your password: ")
             await websocket.send(f"sign_msg:{username}:{password}")
             user_id = await websocket.recv()
+            user_id = int(user_id)
             print(f'Your user id is:{user_id}')
 
         # Authenticate with the server
@@ -45,7 +105,7 @@ async def ws_client(url):
         elif response == "REGISTERED":
             print("Registration successful. Saving user ID and password for future logins.")
             with open(CONFIG_FILE, 'w') as f:
-                json.dump({'user_id': user_id, 'username': username, 'password': password}, f)
+                json.dump({'user_id': user_id, 'username': username, 'password': password, 'time':-1}, f)
         else:
             print("Invalid user ID or password.")
             return
@@ -57,7 +117,7 @@ async def ws_client(url):
         asyncio.create_task(receive_messages(websocket, message_queue))
 
         print("Connected to server. You can start typing messages.")
-
+        # await refresh_message(websocket)
         # 启动一个任务用于处理用户输入
         asyncio.create_task(handle_user_input(websocket))
         # 启动一个任务用于发送心跳包
@@ -66,22 +126,26 @@ async def ws_client(url):
         # 等待队列中的消息并打印
         while True:
             message = await message_queue.get()
+            update_time(datetime.now().replace(microsecond=0).isoformat())
             print(message)
 
 async def receive_messages(websocket, message_queue):
     try:
         async for message in websocket:
+
+            # 消息格式为 "sender_user_id:sender_username:message:time"
+            msg = json.loads(message)
+            logging.info(f'收到信息：{msg}')
+            # print(type(user_id),type(msg['id']))
             # 如果是心跳包或心跳响应，则忽略
-            if message in ['heartbeat', 'heartbeat_ack']:
+            if msg['message'] in ['heartbeat', 'heartbeat_ack']:
                 continue
-            # 消息格式为 "sender_user_id:sender_username:message"
-            sender_user_id, sender_username, msg = message.split(":", 2)
-            if sender_user_id == user_id:
-                await message_queue.put(f"You: {msg}")
-            elif sender_user_id == '0':
-                await message_queue.put(f"server: {msg}")
+            if msg['id'] == user_id:
+                await message_queue.put(f"You: {msg['message']}")
+            elif msg['id'] == '0':
+                await message_queue.put(f"server: {msg['message']}")
             else:
-                await message_queue.put(f"{sender_username}: {msg}")
+                await message_queue.put(f"{msg['name']}: {msg['message']}")
     except websockets.ConnectionClosed:
         print("Connection closed. Exiting...")
         asyncio.get_event_loop().stop()
@@ -89,7 +153,7 @@ async def receive_messages(websocket, message_queue):
 async def handle_user_input(websocket):
     while True:
         # Get user input in a separate thread to avoid blocking the event loop
-        message = await asyncio.get_event_loop().run_in_executor(None, input, '')
+        message = await asyncio.get_event_loop().run_in_executor(None, input, '')#这里到时候该如何对接图形化呢？
         # Send the message to the server
         await websocket.send(message)
 
