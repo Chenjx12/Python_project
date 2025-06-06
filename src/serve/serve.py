@@ -34,11 +34,11 @@ def json_create(flag, id, name, message, times):
     #flag字段值对应：
     #0：正常消息；1：登录消息；2：注册；3：服务端心跳；4：客户端心跳
     msg = {
-        'flag': flag,
-        'id': id,
-        'name': name,
-        'message': message,
-        'timestamp': times
+        "flag": flag,
+        "id": id,
+        "name": name,
+        "message": message,
+        "timestamp": times
     }
     return json.dumps(msg)
 
