@@ -3,14 +3,11 @@ import asyncio
 import json
 import websockets
 import logging
-import sqlite3
-import time
 from datetime import datetime
 import os
 import hashlib
 import ssl
 from sqlmg import SqlMG
-from src.client.client1 import user_id
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

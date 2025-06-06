@@ -1,7 +1,6 @@
 import asyncio
 import websockets
 import json
-import sqlite3
 import logging
 from datetime import datetime
 import os
