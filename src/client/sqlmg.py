@@ -26,6 +26,7 @@ class SqlMG():
         """SQLite数据库设置"""
         try:
             self.conn = sqlite3.connect(database)
+            self.conn.row_factory = sqlite3.Row
             self.cursor = self.conn.cursor()
             logger.info('SqlMG init successfully.')
         except sqlite3.Error as e:

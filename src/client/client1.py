@@ -16,7 +16,6 @@ cert_path = os.path.join(current_dir, 'source', 'cert.pem')
 
 user_id = ''
 
-# conn = sqlite3.connect('basedata.db', detect_types=sqlite3.PARSE_DECLTYPES)
 sql = SqlMG('basedata.db')
 sql.client_sql()
 
@@ -109,6 +108,8 @@ async def ws_client(url):
         # 创建一个队列用于存储接收到的消息
         message_queue = asyncio.Queue()
 
+        await load_message_from_db(sql, message_queue)
+
         # 启动一个任务用于接收消息
         asyncio.create_task(receive_messages(websocket, message_queue))
 
@@ -163,8 +164,19 @@ async def handle_user_input(websocket):
     while True:
         message = await asyncio.get_event_loop().run_in_executor(None, input, '')
         msg = json_create(0, user_id, username, message, datetime.now().replace(microsecond=0).isoformat())
+        sql.exec("INSERT INTO messages (sender_id, sender_username, message, timestamp) VALUES (?,?,?,?)",
+                 (user_id, username, message, datetime.now().replace(microsecond=0).isoformat()))
         await websocket.send(msg)
 
+async def load_message_from_db(sql, msg_queue):
+    all_load = sql.fetch("SELECT sender_id, sender_username, message, timestamp FROM messages ")
+    for row in all_load:
+        if row['sender_id'] == user_id:
+            await msg_queue.put(f"You: {row['message']}")
+        elif row['sender_id'] == '0':
+            await msg_queue.put(f"server: {row['message']}")
+        else:
+            await msg_queue.put(f"{row['sender_id']}: {row['message']}")
 
 async def heart_beat(websocket):
     while True:
