@@ -58,7 +58,7 @@ async def check_client_heartbeats():
 def authenticate_client(user_id, password) -> bool:
     result = sql.fetch("SELECT password_hash, salt FROM clients WHERE user_id = ?", (user_id,))
     if result:
-        password_hash, salt = result[0]
+        password_hash, salt = result[0]['password_hash'], result[0]['salt']
         input_hash = hashlib.sha256((password + salt).encode()).hexdigest()
         return input_hash == password_hash
     return False
@@ -71,7 +71,7 @@ def register_client(username, password) -> int | None:
         password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
         sql.exec('INSERT INTO clients (username, password_hash, salt) VALUES (?, ?, ?)', (username, password_hash, salt))
         result = sql.fetch('SELECT user_id FROM clients WHERE username = ?', (username,))
-        return result[0][0] if result else None
+        return result[0]['user_id'] if result else None
     except Exception as e:
         logging.error(f"Error: {e}")
         return None
@@ -189,7 +189,11 @@ async def refresh_msg(user_id, last_time, websocket):
         ORDER BY timestamp
     """, (last_time,))
 
-    for sender_id, sender_name, message, timestamp in result:
+    for row in result:
+        sender_id = row['sender_id']
+        sender_name = row['sender_username']
+        message = row['message']
+        timestamp = row['timestamp']
         msg = json_create(6, sender_id, sender_name, message, timestamp)
         await websocket.send(msg)
 
