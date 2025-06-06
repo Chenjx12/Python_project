@@ -24,11 +24,11 @@ def json_create(flag, id, name, message, times):
     #flag字段值对应：
     #0：正常消息；1：登录消息；2：注册；3：服务端心跳；4：客户端心跳
     msg = {
-        'flag': flag,
-        'id': id,
-        'name': name,
-        'message': message,
-        'timestamp': times
+        "flag": flag,
+        "id": id,
+        "name": name,
+        "message": message,
+        "timestamp": times
     }
     return json.dumps(msg)
 
@@ -41,12 +41,17 @@ async def refresh_message(websocket):
         time = json.load(f)['time']
     if time == -1 :
         return
-    await websocket.send(time)
+    await websocket.send(json_create(5, user_id, 0,time,0))
     async for msg in websocket:
         rcv = json.loads(msg)
         # cursor.execute("select user_name from users where user_id = ?", rcv[0])
         # res = cursor.fetchall()
+        if rcv['message'] == "sync_complete":
+            break
+        elif rcv['message'] == "heartbeat":
+            continue
         sql.exec("insert into messages(sender_id, sender_username, message, timestamp) values(?,?,?,?)", (rcv['id'], rcv['name'], rcv['message'], rcv['timestamp']))
+    update_time(now())
 
 def update_time(timestamp):
     with open(CONFIG_FILE, 'r') as f:
@@ -96,6 +101,7 @@ async def ws_client(url):
         response = json.loads(response)['message']
         if response == "LOGIN_SUCCESS":
             print("Login successful.")
+            await refresh_message(websocket)
         else:
             print("Invalid user ID or password.")
             return
