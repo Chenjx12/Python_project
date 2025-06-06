@@ -1,12 +1,16 @@
 #!/usr/bin/python3
 import asyncio
+import json
 import websockets
 import logging
 import sqlite3
 import time
+from datetime import datetime
 import os
 import hashlib
 import ssl
+from sqlmg import SqlMG
+from src.client.client1 import user_id
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,34 +27,28 @@ connected_clients = {}
 client_heartbeats = {}
 
 # SQLite数据库设置
-conn = sqlite3.connect('clients.db')
-cursor = conn.cursor()
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS clients (
-    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL,
-    password_hash TEXT NOT NULL,  -- 存储密码的哈希值
-    salt TEXT NOT NULL            -- 存储盐值
-)
-''')
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender_id INTEGER,
-    sender_username TEXT,
-    message TEXT,
-    timestamp TEXT,
-    FOREIGN KEY(sender_id) REFERENCES clients(user_id)
-)
-''')
-conn.commit()
+sql = SqlMG('clients.db')
+sql.sever_sql()
+
+def json_create(flag, id, name, message, times):
+    #flag字段值对应：
+    #0：正常消息；1：登录消息；2：注册；3：服务端心跳；4：客户端心跳
+    msg = {
+        'flag': flag,
+        'id': id,
+        'name': name,
+        'message': message,
+        'timestamp': times
+    }
+    return json.dumps(msg)
+
 
 # 检查客户端心跳状态
 async def check_client_heartbeats():
     while True:
-        current_time = time.time()
+        current_time = datetime.now()
         for user_id, last_heartbeat in list(client_heartbeats.items()):
-            if current_time - last_heartbeat > 60:  # 超过60秒未收到心跳包
+            if int(current_time - last_heartbeat) > 60:  # 超过60秒未收到心跳包
                 logging.info(f"客户端 {user_id} 超过60秒未发送心跳包，标记为离线。")
                 connected_clients.pop(user_id, None)
                 client_heartbeats.pop(user_id, None)
@@ -58,45 +56,49 @@ async def check_client_heartbeats():
 
 # 验证客户端的用户ID和密码
 def authenticate_client(user_id, password) -> bool:
-    cursor.execute("SELECT password_hash, salt FROM clients WHERE user_id = ?", (user_id,))
-    result = cursor.fetchone()
+    result = sql.fetch("SELECT password_hash, salt FROM clients WHERE user_id = ?", (user_id,))
     if result:
-        password_hash, salt = result
+        password_hash, salt = result[0]
         input_hash = hashlib.sha256((password + salt).encode()).hexdigest()
         return input_hash == password_hash
     return False
 
+
 # 注册新客户端
-def register_client(username, password) -> int:
+def register_client(username, password) -> int | None:
     try:
         salt = os.urandom(16).hex()
         password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-        cursor.execute('INSERT INTO clients (username, password_hash, salt) VALUES (?, ?, ?)', (username, password_hash, salt))
-        user_id = cursor.lastrowid
-        conn.commit()
-    except sqlite3.IntegrityError as e:
-        logging.info(f"Error: {e}")
-        user_id = None
-    return user_id
+        sql.exec('INSERT INTO clients (username, password_hash, salt) VALUES (?, ?, ?)', (username, password_hash, salt))
+        result = sql.fetch('SELECT user_id FROM clients WHERE username = ?', (username,))
+        return result[0][0] if result else None
+    except Exception as e:
+        logging.error(f"Error: {e}")
+        return None
+
 
 # 获取用户的离线消息
-def get_offline_messages(user_id):
-    cursor.execute("SELECT sender_id, sender_username, message FROM messages WHERE sender_id != ? ORDER BY timestamp", (user_id,))
-    messages = cursor.fetchall()
-    return [f"{sender_id}:{sender_username}:{msg}" for sender_id, sender_username, msg in messages]
+# def get_offline_messages(user_id):
+#     cursor.execute("SELECT sender_id, sender_username, message FROM messages WHERE sender_id != ? ORDER BY timestamp", (user_id,))
+#     messages = cursor.fetchall()
+#     return [f"{sender_id}:{sender_username}:{msg}" for sender_id, sender_username, msg in messages]
+
+def now():
+    return datetime.now().replace(microsecond=0).isoformat()
 
 # 存储消息记录
 def store_message(sender_id, sender_username, message):
-    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    cursor.execute("INSERT INTO messages (sender_id, sender_username, message, timestamp) VALUES (?, ?, ?, ?)", (sender_id, sender_username, message, timestamp))
-    conn.commit()
+    sql.exec("INSERT INTO messages (sender_id, sender_username, message, timestamp) VALUES (?, ?, ?, datetime('now','localtime'))",
+             (sender_id, sender_username, message))
+
 
 # 定期向客户端发送心跳包
 async def send_heartbeats():
     while True:
         for user_id, client in connected_clients.items():
             try:
-                await client.send('heartbeat')
+
+                await client.send(json_create(0,0,0,"heartbeat",0))
                 logging.info(f"向客户端 {user_id} 发送心跳包")
             except websockets.ConnectionClosed:
                 logging.info(f"客户端 {user_id} 连接已关闭，移除客户端")
@@ -106,57 +108,54 @@ async def send_heartbeats():
 
 # WebSocket连接处理函数
 async def handler(websocket):
-    user_id = None
     try:
-        login_or_sign = await websocket.recv()
-        if login_or_sign == 'Login':
-            auth_message = await websocket.recv()
-            lg_msg, user_id, username, password = auth_message.split(":")
-            if authenticate_client(user_id, password):
-                await websocket.send('LOGIN_SUCCESS')
-                logging.info(f"客户端已登录：{user_id}")
-            else:
-                logging.info(f"用户ID或密码错误：{user_id}")
-                await websocket.send("LOGIN_FAIL")
-                await websocket.close()
-                return
-        elif login_or_sign == 'Sign':
-            logging.info('new user sign up.')
-            auth_message = await websocket.recv()
-            sign_msg, user_name, password = auth_message.split(":")
-            user_id = register_client(user_name, password)
-            await websocket.send(f'{user_id}')
-            await websocket.send('REGISTERED')
-            logging.info(f'register user with id:{user_id}')
+        try:
+            user_id = None
+            async for raw_message in websocket:
+                msg = json.loads(raw_message)
+                flag = msg.get("flag")
 
-        if user_id is not None:
-            connected_clients[user_id] = websocket
-            client_heartbeats[user_id] = time.time()
+                if flag == 4 and user_id is not None:  # 客户端心跳
+                    client_heartbeats[user_id] = datetime.now()
+                    logging.info(f"收到心跳：{user_id}")
+                    continue
 
-            offline_msgs = get_offline_messages(user_id)
-            for message in offline_msgs:
-                await websocket.send(message)
-                logging.info(f"向客户端 {user_id} 发送离线消息：{message}")
+                elif flag == 1:  # 登录
+                    user_id = int(msg['id'])
+                    username = msg['name']
+                    password = msg['message']
+                    if authenticate_client(user_id, password):
+                        await websocket.send(json_create(1, 0, 'server', 'LOGIN_SUCCESS', now()))
+                        logging.info(f"客户端已登录：{user_id}")
+                        connected_clients[user_id] = websocket
+                        client_heartbeats[user_id] = datetime.now()
 
-            try:
-                async for message in websocket:
-                    if message == 'heartbeat':
-                        logging.info(f"从客户端 {user_id} 收到心跳包")
-                        client_heartbeats[user_id] = time.time()
-                        continue
-                    elif message.startswith('sign_msg'):
-                        pass
-                    elif message.startswith('login_msg'):
-                        user_login_name = message.split(':')[2]
-                        await broadcast(0, user_login_name, f'用户{user_login_name}已上线')
                     else:
-                        logging.info(f"从客户端 {user_id} 收到消息：{message}")
-                        cursor.execute("SELECT username FROM clients WHERE user_id = ?", (user_id,))
-                        sender_username = cursor.fetchone()[0]
-                        store_message(user_id, sender_username, message)
-                        await broadcast(user_id, sender_username, message)
-            except websockets.ConnectionClosed as e:
-                logging.info(f"客户端连接已关闭 (用户ID：{user_id})：{e}")
+                        await websocket.send(json_create(1, 0, 'server', 'LOGIN_FAIL', now()))
+                        await websocket.close()
+                        return
+
+                elif flag == 2:  # 注册
+                    username = msg['name']
+                    password = msg['message']
+                    user_id = register_client(username, password)
+                    await websocket.send(json_create(2, user_id, username, 'REGISTERED', now()))
+                    logging.info(f'register user with id:{user_id}')
+
+
+                elif flag == 5 and user_id is not None:  # 同步离线消息
+                    await refresh_msg(user_id, msg['message'], websocket)
+
+                elif flag == 0 and user_id is not None:  # 普通消息
+                    sender_username = msg['name']
+                    store_message(user_id, sender_username, msg['message'])
+                    await broadcast(user_id, sender_username, msg['message'])
+
+                else:
+                    logging.warning(f"未知 flag：{flag}")
+
+        except websockets.ConnectionClosed as e:
+            logging.info(f"客户端连接已关闭 (用户ID：{user_id})：{e}")
     finally:
         if user_id is not None:
             connected_clients.pop(user_id, None)
@@ -166,8 +165,31 @@ async def handler(websocket):
 # 广播消息给所有已连接的客户端
 async def broadcast(sender_user_id, sender_username, message):
     for user_id, client in connected_clients.items():
-        await client.send(f"{sender_user_id}:{sender_username}:{message}")
-        logging.info(f"向客户端 {user_id} 广播消息：{sender_user_id}:{sender_username}:{message}")
+        msg = json_create(0, sender_user_id, sender_username, message, datetime.now().replace(microsecond=0).isoformat())
+        await client.send(msg)
+        logging.info(f"向客户端 {user_id} 广播消息：{msg}")
+
+#应当放在连接建立处，与客户端进行通讯拿到时间后查询再返回
+async def refresh_msg(user_id, last_time, websocket):
+    # with open(CONFIG_FILE, 'r') as f:
+    #     time_data = json.load(f)
+    # last_time = time_data.get('time', '-1')
+    last_time = datetime.fromisoformat(last_time)
+
+    logging.info(f"开始向客户端 {user_id} 同步离线消息，自 {last_time}")
+    result = sql.fetch("""
+        SELECT sender_id, sender_username, message, timestamp 
+        FROM messages 
+        WHERE timestamp >= ? 
+        ORDER BY timestamp
+    """, (last_time,))
+
+    for sender_id, sender_name, message, timestamp in result:
+        msg = json_create(6, sender_id, sender_name, message, timestamp)
+        await websocket.send(msg)
+
+    await websocket.send(json_create(7, 0, "server", "sync_complete", now()))
+
 
 # 主函数
 async def main():
