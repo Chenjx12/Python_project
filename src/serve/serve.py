@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import asyncio
+import base64
 import json
 import websockets
 import logging
@@ -28,8 +29,19 @@ sql = SqlMG('clients.db')
 sql.sever_sql()
 
 def json_create(flag, id, name, message, times):
-    #flag字段值对应：
-    #0：正常消息；1：登录消息；2：注册；3：服务端心跳；4：客户端心跳
+    """
+    | flag | 功能 |
+    | 0 | 普通消息 |
+    | 1 | 登录消息 |
+    | 2 | 注册消息 |
+    | 3 | 服务端心跳包 |
+    | 4 | 客户端心跳包 |
+    | 5 | 服务端同步离线消息 |
+    | 6 | 客户端离线消息同步请求 |
+    | 7 | 服务端离线消息同步完成 |
+    | 8 | 图片消息 |
+    | 9 | 文件消息 |
+    """
     msg = {
         "flag": flag,
         "id": id,
@@ -39,6 +51,21 @@ def json_create(flag, id, name, message, times):
     }
     return json.dumps(msg)
 
+def pic_msg(msg, user_id):
+    # 确保/pic/文件夹存在，用于存储图片
+    pic_folder = os.path.join(current_dir, 'pic')
+    if not os.path.exists(pic_folder):
+        os.makedirs(pic_folder)
+
+    image_data = msg['message']  # 图片数据，假设是base64编码
+    image_name = f"image_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+    image_path = os.path.join(pic_folder, image_name)
+
+    # 解码图片并保存到磁盘
+    with open(image_path, 'wb') as img_file:
+        img_file.write(base64.b64decode(image_data))  # 假设是base64编码的图片
+
+    return image_path
 
 # 检查客户端心跳状态
 async def check_client_heartbeats():
@@ -144,7 +171,6 @@ async def handler(websocket):
                         logging.info(f"注册请求失败")
 
 
-
                 elif flag == 5 and user_id is not None:  # 同步离线消息
                     await refresh_msg(user_id, msg['message'], websocket)
 
@@ -153,6 +179,13 @@ async def handler(websocket):
                     store_message(user_id, sender_username, msg['message'])
                     await broadcast(user_id, sender_username, msg['message'])
 
+                # 处理图片消息
+                elif flag == 8 and user_id is not None:  # 图片消息
+                    image_path = pic_msg(msg, user_id)
+                    # 将图片路径存入数据库
+                    store_message(user_id, sender_username, image_path)
+                    # 广播图片消息给所有客户端
+                    await broadcast(user_id, sender_username, f"{msg['message']}", 8)
                 else:
                     logging.warning(f"未知 flag：{flag}")
 
@@ -165,11 +198,17 @@ async def handler(websocket):
             logging.info(f"已将客户端从连接列表中移除 (用户ID：{user_id})")
 
 # 广播消息给所有已连接的客户端
-async def broadcast(sender_user_id, sender_username, message):
+async def broadcast(sender_user_id, sender_username, message, flag=0):
     for user_id, client in connected_clients.items():
-        msg = json_create(0, sender_user_id, sender_username, message, datetime.now().replace(microsecond=0).isoformat())
-        await client.send(msg)
-        logging.info(f"向客户端 {user_id} 广播消息：{msg}")
+        if flag == 0:
+            msg = json_create(flag, sender_user_id, sender_username, message, datetime.now().replace(microsecond=0).isoformat())
+            await client.send(msg)
+            logging.info(f"向客户端 {user_id} 广播消息：{msg}")
+        elif flag == 8:
+            msg = json_create(flag, sender_user_id, sender_username, message,
+                              datetime.now().replace(microsecond=0).isoformat())
+            await client.send(msg)
+            logging.info(f"向客户端 {user_id} 广播图片消息")
 
 #应当放在连接建立处，与客户端进行通讯拿到时间后查询再返回
 async def refresh_msg(user_id, last_time, websocket):
