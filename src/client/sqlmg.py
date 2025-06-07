@@ -48,6 +48,7 @@ class SqlMG():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sender_id INTEGER,
                 sender_username TEXT,
+                type INTEGER,
                 message TEXT,
                 timestamp DATETIME,
                 FOREIGN KEY(sender_id) REFERENCES clients(user_id)
@@ -66,6 +67,7 @@ class SqlMG():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sender_id INTEGER,
                 sender_username TEXT,
+                type INTEGER,
                 message TEXT,
                 timestamp DATETIME
             );

@@ -51,3 +51,24 @@ python小组作业
 | 7    | 服务端离线消息同步完成 |
 | 8    | 图片消息        |
 | 9    | 文件消息        |
+
+其中0，8，9三类消息将被存入数据库：
+```sql
+CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_id INTEGER,
+                sender_username TEXT,
+                type INTEGER,
+                message TEXT,
+                timestamp DATETIME
+            );
+```
+对应消息的type：
+普通文本，message字段即为消息内容
+图片和文件消息，message字段为本地存储位置（使用相对路径，/pic/和/file/）
+
+| type | 类型   |
+|:-----|:-----|
+| 0    | 普通文本 |
+| 1    | 图片消息 |
+| 2    | 文件消息 |
