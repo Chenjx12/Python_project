@@ -64,20 +64,20 @@ async def refresh_message(websocket):
         sql.exec("insert into messages(sender_id, sender_username, message, timestamp) values(?,?,?,?)", (rcv['id'], rcv['name'], rcv['message'], rcv['timestamp']))
     update_time(now())
 
-async def pic_msg(msg, msg_queue):
+async def rec_pic_msg(msg, msg_queue):
     # 确保received_pics文件夹存在
     received_folder = os.path.join(current_dir, 'received_pics')
     if not os.path.exists(received_folder):
         os.makedirs(received_folder)
 
-    image_path = msg['message']
+    image_data = msg['message']
     # 保存图片到received_pics文件夹
-    img_name = os.path.basename(image_path)
+    img_name = os.path.basename(image_data)
     save_path = os.path.join(received_folder, img_name)
 
     with open(save_path, 'wb') as img_file:
-        img_file.write(base64.b64decode(image_path))  # 假设是base64编码的图片
-    await msg_queue.put(f"[接收到一条来自{msg['name']}的图片消息，已保存到本地] {image_path}")
+        img_file.write(base64.b64decode(image_data))  # 假设是base64编码的图片
+    await msg_queue.put(f"[接收到一条来自{msg['name']}的图片消息，已保存到本地] {save_path}")
 
 def update_time(timestamp):
     with open(CONFIG_FILE, 'r') as f:
@@ -174,14 +174,14 @@ async def receive_messages(websocket, message_queue):
                 print("[系统] 离线消息同步完成。")
             if msg['id'] == user_id:
                 if msg['flag'] == 8:
-                    await pic_msg(msg, message_queue)
+                    await rec_pic_msg(msg, message_queue)
                 else:
                     await message_queue.put(f"You: {msg['message']}")
             elif msg['id'] == '0':
                 await message_queue.put(f"server: {msg['message']}")
             else:
                 if msg['flag'] == 8:
-                    await pic_msg(msg, message_queue)
+                    await rec_pic_msg(msg, message_queue)
                 else:
                     await message_queue.put(f"{msg['name']}: {msg['message']}")
     except websockets.ConnectionClosed:
