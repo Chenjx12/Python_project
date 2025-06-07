@@ -52,6 +52,7 @@ def json_create(flag, id, name, message, times):
     return json.dumps(msg)
 
 def pic_msg(msg, user_id):
+    """处理图片消息"""
     # 确保/pic/文件夹存在，用于存储图片
     pic_folder = os.path.join(current_dir, 'pic')
     if not os.path.exists(pic_folder):
@@ -69,6 +70,7 @@ def pic_msg(msg, user_id):
 
 # 检查客户端心跳状态
 async def check_client_heartbeats():
+    """检查客户端心跳状态"""
     while True:
         current_time = datetime.now()
         for user_id, last_heartbeat in list(client_heartbeats.items()):
@@ -80,6 +82,7 @@ async def check_client_heartbeats():
 
 # 验证客户端的用户ID和密码
 def authenticate_client(user_id, password) -> bool:
+    """验证客户端的用户ID和密码"""
     result = sql.fetch("SELECT password_hash, salt FROM clients WHERE user_id = ?", (user_id,))
     if result:
         password_hash, salt = result[0]['password_hash'], result[0]['salt']
@@ -90,6 +93,7 @@ def authenticate_client(user_id, password) -> bool:
 
 # 注册新客户端
 def register_client(username, password) -> int | None:
+    """注册新客户端"""
     try:
         salt = os.urandom(16).hex()
         password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
@@ -100,24 +104,20 @@ def register_client(username, password) -> int | None:
         logging.error(f"Error: {e}")
         return None
 
-
-# 获取用户的离线消息
-# def get_offline_messages(user_id):
-#     cursor.execute("SELECT sender_id, sender_username, message FROM messages WHERE sender_id != ? ORDER BY timestamp", (user_id,))
-#     messages = cursor.fetchall()
-#     return [f"{sender_id}:{sender_username}:{msg}" for sender_id, sender_username, msg in messages]
-
 def now():
+    """返回现在的格式化时间"""
     return datetime.now().replace(microsecond=0).isoformat()
 
 # 存储消息记录
 def store_message(sender_id, sender_username, message):
+    """存储消息记录"""
     sql.exec("INSERT INTO messages (sender_id, sender_username, message, timestamp) VALUES (?, ?, ?, datetime('now','localtime'))",
              (sender_id, sender_username, message))
 
 
 # 定期向客户端发送心跳包
 async def send_heartbeats():
+    """定期向客户端发送心跳包"""
     while True:
         for user_id, client in connected_clients.items():
             try:
@@ -150,7 +150,9 @@ async def handler(websocket):
                     password = msg['message']
                     if authenticate_client(user_id, password):
                         await websocket.send(json_create(1, 0, 'server', 'LOGIN_SUCCESS', now()))
+                        await broadcast(0, username, f"用户{username}已上线", 1)
                         logging.info(f"客户端已登录：{user_id}")
+
                         connected_clients[user_id] = websocket
                         client_heartbeats[user_id] = datetime.now()
 
@@ -197,24 +199,24 @@ async def handler(websocket):
             client_heartbeats.pop(user_id, None)
             logging.info(f"已将客户端从连接列表中移除 (用户ID：{user_id})")
 
-# 广播消息给所有已连接的客户端
 async def broadcast(sender_user_id, sender_username, message, flag=0):
+    """广播消息给所有已连接的客户端"""
     for user_id, client in connected_clients.items():
         if flag == 0:
-            msg = json_create(flag, sender_user_id, sender_username, message, datetime.now().replace(microsecond=0).isoformat())
+            msg = json_create(flag, sender_user_id, sender_username, message, now())
             await client.send(msg)
             logging.info(f"向客户端 {user_id} 广播消息：{msg}")
+        elif flag == 1:
+            msg = json_create(flag, 0, 0, message, now())
+            await client.send(msg)
         elif flag == 8:
-            msg = json_create(flag, sender_user_id, sender_username, message,
-                              datetime.now().replace(microsecond=0).isoformat())
+            msg = json_create(flag, sender_user_id, sender_username, message, now())
             await client.send(msg)
             logging.info(f"向客户端 {user_id} 广播图片消息")
 
 #应当放在连接建立处，与客户端进行通讯拿到时间后查询再返回
 async def refresh_msg(user_id, last_time, websocket):
-    # with open(CONFIG_FILE, 'r') as f:
-    #     time_data = json.load(f)
-    # last_time = time_data.get('time', '-1')
+    """"给客户端同步消息"""
     last_time = datetime.fromisoformat(last_time)
 
     logging.info(f"开始向客户端 {user_id} 同步离线消息，自 {last_time}")
