@@ -7,6 +7,8 @@ import ssl
 from datetime import datetime
 from sqlmg import SqlMG
 import websockets
+from PIL import Image
+import io
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -15,6 +17,14 @@ CONFIG_FILE = 'client.config'
 current_dir = os.getcwd()
 cert_path = os.path.join(current_dir, 'source', 'cert.pem')
 
+# 消息大小限制（10MB）
+MAX_MESSAGE_SIZE = 10 * 1024 * 1024
+# 图片压缩质量（1-100）
+IMAGE_QUALITY = 85
+# 最大图片尺寸
+MAX_IMAGE_SIZE = (1920, 1080)
+
+
 # 全局变量
 class GlobalState:
     def __init__(self):
@@ -22,7 +32,9 @@ class GlobalState:
         self.username = None
         self.password = None
 
+
 global_state = GlobalState()
+
 
 class WebSocketManager:
     def __init__(self, url='wss://localhost:9998'):
@@ -69,8 +81,9 @@ class WebSocketManager:
             elif rcv['message'] == "heartbeat":
                 continue
             if rcv['flag'] == 0:
-                self.sql.exec("INSERT INTO messages(sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                              (rcv['id'], rcv['name'], rcv['flag'], rcv['message'], rcv['timestamp']))
+                self.sql.exec(
+                    "INSERT INTO messages(sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
+                    (rcv['id'], rcv['name'], rcv['flag'], rcv['message'], rcv['timestamp']))
             elif rcv['flag'] == 8:
                 rcv = self.rec_pic_msg(rcv)
                 self.sql.exec(
@@ -128,7 +141,8 @@ class WebSocketManager:
     def load_message_from_db(self):
         all_load = self.sql.fetch("SELECT sender_id, sender_username, message, timestamp, type FROM messages ")
         for row in all_load:
-            msg = self.json_create(row['type'], row['sender_id'], row['sender_username'], row['message'], row['timestamp'])
+            msg = self.json_create(row['type'], row['sender_id'], row['sender_username'], row['message'],
+                                   row['timestamp'])
             self.message_queue.put_nowait(msg)
 
     async def receive_messages(self):
@@ -148,8 +162,9 @@ class WebSocketManager:
                     logging.info("[系统] 离线消息同步完成。")
                 elif msg['id'] == global_state.user_id:
                     if msg['flag'] == 8:
-                        self.sql.exec("INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                            (msg['id'], msg['name'], msg['flag'] ,msg['message'], msg['timestamp']))
+                        self.sql.exec(
+                            "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
+                            (msg['id'], msg['name'], msg['flag'], msg['message'], msg['timestamp']))
                         msg = self.rec_pic_msg(msg)
                         message = json.dumps(msg)
                     self.message_queue.put_nowait(message)
@@ -175,7 +190,7 @@ class WebSocketManager:
         with open(save_path, 'wb') as img_file:
             img_file.write(base64.b64decode(image_data))
         msg['message'] = save_path
-        return  msg
+        return msg
 
     async def heart_beat(self):
         while True:
@@ -185,7 +200,12 @@ class WebSocketManager:
 
     async def connect_ws(self, user_id, username, password):
         try:
-            self.websocket = await websockets.connect(self.url, ssl=self.ssl_context)
+            # 设置最大消息大小
+            self.websocket = await websockets.connect(
+                self.url,
+                ssl=self.ssl_context,
+                max_size=MAX_MESSAGE_SIZE
+            )
             return await self.ws_client(user_id, username, password)
         except Exception as e:
             logger.error(f"WebSocket连接失败: {e}")
@@ -197,8 +217,9 @@ class WebSocketManager:
             return False
         try:
             msg = self.json_create(0, global_state.user_id, global_state.username, message, self.now())
-            self.sql.exec("INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                          (global_state.user_id, global_state.username, 0, message, self.now()))
+            self.sql.exec(
+                "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
+                (global_state.user_id, global_state.username, 0, message, self.now()))
             await self.websocket.send(msg)
             return True
         except Exception as e:
@@ -206,20 +227,61 @@ class WebSocketManager:
             self.is_connected = False
             return False
 
+    def compress_image(self, image_path):
+        """压缩图片"""
+        try:
+            # 打开图片
+            with Image.open(image_path) as img:
+                # 转换为RGB模式（如果是RGBA，去除透明通道）
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+
+                # 调整图片大小
+                if img.size[0] > MAX_IMAGE_SIZE[0] or img.size[1] > MAX_IMAGE_SIZE[1]:
+                    img.thumbnail(MAX_IMAGE_SIZE, Image.Resampling.LANCZOS)
+
+                # 保存到内存中
+                output = io.BytesIO()
+                img.save(output, format='JPEG', quality=IMAGE_QUALITY, optimize=True)
+                compressed_data = output.getvalue()
+
+                # 检查压缩后的大小
+                if len(compressed_data) > MAX_MESSAGE_SIZE:
+                    logger.error(f"图片压缩后仍然超过大小限制: {len(compressed_data)} bytes > {MAX_MESSAGE_SIZE} bytes")
+                    return None
+
+                return compressed_data
+        except Exception as e:
+            logger.error(f"压缩图片时出错: {e}")
+            return None
+
     async def send_image(self, image_path):
         if not self.is_connected:
             logger.error("未连接到WebSocket服务器")
             return False
-        if not os.path.exists(image_path):
-            logger.error(f"图片文件不存在: {image_path}")
+        try:
+            if not os.path.exists(image_path):
+                logger.error(f"图片文件不存在: {image_path}")
+                return False
+
+            # 压缩图片
+            compressed_data = self.compress_image(image_path)
+            if compressed_data is None:
+                return False
+
+            # 转换为base64
+            img_data = base64.b64encode(compressed_data).decode('utf-8')
+
+            msg = self.json_create(8, global_state.user_id, global_state.username, img_data, self.now())
+            self.sql.exec(
+                "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
+                (global_state.user_id, global_state.username, 8, image_path, self.now()))
+            await self.websocket.send(msg)
+            return True
+        except Exception as e:
+            logger.error(f"发送图片失败: {e}")
+            self.is_connected = False
             return False
-        with open(image_path, 'rb') as img_file:
-            img_data = base64.b64encode(img_file.read()).decode('utf-8')
-        msg = self.json_create(8, global_state.user_id, global_state.username, img_data, self.now())
-        self.sql.exec("INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                          (global_state.user_id, global_state.username, 8, image_path, self.now()))
-        await self.websocket.send(msg)
-        return True
 
     async def disconnect(self):
         if self.websocket and self.websocket.open:

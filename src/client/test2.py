@@ -15,14 +15,13 @@ import humanize
 import WebsocketMG
 import asyncio
 
-
 CONFIG_FILE = 'client.config'
 
 user_id = 0
 
+
 def insert_soft_breaks(text):
     return '\u200b'.join(text)
-
 
 
 class LoginWindow(QWidget):
@@ -64,7 +63,8 @@ class LoginWindow(QWidget):
         file_path = os.path.join(os.getcwd(), CONFIG_FILE)
         print(file_path)
         if not self.config_empty(file_path):
-            QTimer.singleShot(0, lambda: asyncio.create_task(self.try_login(self.msg['username'], self.msg['password'])))
+            QTimer.singleShot(0,
+                              lambda: asyncio.create_task(self.try_login(self.msg['username'], self.msg['password'])))
 
     def focus_password(self):
         self.input_password.setFocus()
@@ -115,6 +115,7 @@ class LoginWindow(QWidget):
         except Exception as e:
             print(f"处理文件时出错: {e}")
             return True
+
 
 class MessageBubble(QWidget):
     def __init__(self, content, msg_type="text", is_sender=True):
@@ -225,13 +226,13 @@ class SendOnEnterTextEdit(QTextEdit):
 
 
 class GridLayoutWindow(QMainWindow):
-    def __init__(self,web):
+    def __init__(self, web):
         super().__init__()
         self.bubbles = []
         self.setWindowTitle("三列网格布局 - 列宽定制")
         self.setGeometry(1100, 100, 900, 600)
         self.web = web
-        
+
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
@@ -305,7 +306,7 @@ class GridLayoutWindow(QMainWindow):
             self.add_message(file_path, "file", is_sender=True)
             QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_file(file_path)))
 
-    def add_message(self, content, msg_type="text",time=0,name='me',is_sender=True):
+    def add_message(self, content, msg_type="text", time=0, name='me', is_sender=True):
         bubble = MessageBubble(content, msg_type=msg_type, is_sender=is_sender)
         self.bubbles.append(bubble)
         bubble.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
@@ -358,13 +359,16 @@ class GridLayoutWindow(QMainWindow):
                 if not self.web.is_connected:
                     await asyncio.sleep(1)
                     continue
-                    
+
                 mess = await self.web.message_queue.get()
                 data = json.loads(mess)
                 msg = data['message']
                 name = data['name']
                 flag = data['flag']
                 time = data['timestamp']
+
+                if WebsocketMG.global_state.user_id == data['id']:
+                    continue
 
                 if flag == 0:
                     self.add_message(msg, "text", name=name, time=time, is_sender=False)
@@ -385,10 +389,10 @@ if __name__ == '__main__':
         app = QApplication(sys.argv)
         loop = qasync.QEventLoop(app)
         asyncio.set_event_loop(loop)
-        
+
         window = LoginWindow()
         window.show()
-        
+
         with loop:
             loop.run_forever()
     except Exception as e:

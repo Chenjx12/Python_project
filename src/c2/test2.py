@@ -367,6 +367,9 @@ class GridLayoutWindow(QMainWindow):
                 flag = data['flag']
                 time = data['timestamp']
 
+                if WebsocketMG.global_state.user_id == data['id']:
+                    continue
+
                 if flag == 0:
                     self.add_message(msg, "text", name=name, time=time, is_sender=False)
                 elif flag == 8 and os.path.exists(msg):
