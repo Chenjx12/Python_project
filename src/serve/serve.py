@@ -143,8 +143,6 @@ async def handler(websocket):
                         await websocket.send(json_create(2, user_id, username, 'REGISTERED_FAIL', now()))
                         logging.info(f"注册请求失败")
 
-
-
                 elif flag == 5 and user_id is not None:  # 同步离线消息
                     await refresh_msg(user_id, msg['message'], websocket)
 
