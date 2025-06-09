@@ -7,8 +7,6 @@ import ssl
 from datetime import datetime
 from sqlmg import SqlMG
 import websockets
-from PIL import Image
-import io
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -16,13 +14,6 @@ logger = logging.getLogger(__name__)
 CONFIG_FILE = 'client.config'
 current_dir = os.getcwd()
 cert_path = os.path.join(current_dir, 'source', 'cert.pem')
-
-# 消息大小限制（10MB）
-MAX_MESSAGE_SIZE = 10 * 1024 * 1024
-# 图片压缩质量（1-100）
-IMAGE_QUALITY = 85
-# 最大图片尺寸
-MAX_IMAGE_SIZE = (1920, 1080)
 
 # 全局变量
 class GlobalState:
@@ -194,12 +185,7 @@ class WebSocketManager:
 
     async def connect_ws(self, user_id, username, password):
         try:
-            # 设置最大消息大小
-            self.websocket = await websockets.connect(
-                self.url,
-                ssl=self.ssl_context,
-                max_size=MAX_MESSAGE_SIZE
-            )
+            self.websocket = await websockets.connect(self.url, ssl=self.ssl_context)
             return await self.ws_client(user_id, username, password)
         except Exception as e:
             logger.error(f"WebSocket连接失败: {e}")
@@ -220,60 +206,20 @@ class WebSocketManager:
             self.is_connected = False
             return False
 
-    def compress_image(self, image_path):
-        """压缩图片"""
-        try:
-            # 打开图片
-            with Image.open(image_path) as img:
-                # 转换为RGB模式（如果是RGBA，去除透明通道）
-                if img.mode in ('RGBA', 'P'):
-                    img = img.convert('RGB')
-                
-                # 调整图片大小
-                if img.size[0] > MAX_IMAGE_SIZE[0] or img.size[1] > MAX_IMAGE_SIZE[1]:
-                    img.thumbnail(MAX_IMAGE_SIZE, Image.Resampling.LANCZOS)
-                
-                # 保存到内存中
-                output = io.BytesIO()
-                img.save(output, format='JPEG', quality=IMAGE_QUALITY, optimize=True)
-                compressed_data = output.getvalue()
-                
-                # 检查压缩后的大小
-                if len(compressed_data) > MAX_MESSAGE_SIZE:
-                    logger.error(f"图片压缩后仍然超过大小限制: {len(compressed_data)} bytes > {MAX_MESSAGE_SIZE} bytes")
-                    return None
-                
-                return compressed_data
-        except Exception as e:
-            logger.error(f"压缩图片时出错: {e}")
-            return None
-
     async def send_image(self, image_path):
         if not self.is_connected:
             logger.error("未连接到WebSocket服务器")
             return False
-        try:
-            if not os.path.exists(image_path):
-                logger.error(f"图片文件不存在: {image_path}")
-                return False
-
-            # 压缩图片
-            compressed_data = self.compress_image(image_path)
-            if compressed_data is None:
-                return False
-
-            # 转换为base64
-            img_data = base64.b64encode(compressed_data).decode('utf-8')
-            
-            msg = self.json_create(8, global_state.user_id, global_state.username, img_data, self.now())
-            self.sql.exec("INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                          (global_state.user_id, global_state.username, 8, image_path, self.now()))
-            await self.websocket.send(msg)
-            return True
-        except Exception as e:
-            logger.error(f"发送图片失败: {e}")
-            self.is_connected = False
+        if not os.path.exists(image_path):
+            logger.error(f"图片文件不存在: {image_path}")
             return False
+        with open(image_path, 'rb') as img_file:
+            img_data = base64.b64encode(img_file.read()).decode('utf-8')
+        msg = self.json_create(8, global_state.user_id, global_state.username, img_data, self.now())
+        self.sql.exec("INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
+                          (global_state.user_id, global_state.username, 8, image_path, self.now()))
+        await self.websocket.send(msg)
+        return True
 
     async def disconnect(self):
         if self.websocket and self.websocket.open:
