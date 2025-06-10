@@ -189,12 +189,13 @@ async def handler(websocket):
                 # 处理图片消息
                 elif flag == 8 and user_id is not None:  # 图片消息
                     image_path = pic_msg(msg, user_id)
+                    img_data = msg['message']
                     msg['message'] = image_path
                     sender_username = msg['name']
                     # 将图片路径存入数据库
                     store_message(msg)
                     # 广播图片消息给所有客户端
-                    await broadcast(user_id, sender_username, f"{msg['message']}", 8)
+                    await broadcast(user_id, sender_username, img_data, 8)
 
 
 
@@ -212,6 +213,8 @@ async def handler(websocket):
 async def broadcast(sender_user_id, sender_username, message, flag=0):
     """广播消息给所有已连接的客户端"""
     for user_id, client in connected_clients.items():
+        if user_id == sender_user_id:
+            continue
         if flag == 0:
             msg = json_create(flag, sender_user_id, sender_username, message, now())
             await client.send(msg)
@@ -233,7 +236,7 @@ async def refresh_msg(user_id, last_time, websocket):
     result = sql.fetch("""
         SELECT sender_id, sender_username, message, timestamp, type 
         FROM messages 
-        WHERE timestamp >= ? 
+        WHERE timestamp > ? 
         ORDER BY timestamp
     """, (last_time,))
 

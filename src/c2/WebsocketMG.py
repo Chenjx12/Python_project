@@ -119,8 +119,8 @@ class WebSocketManager:
             logger.info(f"加载消息：{row}")
             self.message_queue.put_nowait(
                 self.json_create(row['type'], row['sender_id'], row['sender_username'], row['message'],
-                               row['timestamp']))
-        self.message_queue.put_nowait(self.json_create(7,0,0,0,0))
+                                 row['timestamp']))
+        self.message_queue.put_nowait(self.json_create(7, 0, 0, 0, 0))
 
     @staticmethod
     def update_time(timestamp):
@@ -188,6 +188,7 @@ class WebSocketManager:
             async for message in self.websocket:
                 msg = json.loads(message)
                 logger.info(f'收到信息：{msg}')
+                self.update_time(msg['timestamp'])
                 msg['timestamp'] = datetime.fromisoformat(msg['timestamp'])
                 if msg['message'] in ['heartbeat', 'heartbeat_ack']:
                     continue
@@ -230,14 +231,23 @@ class WebSocketManager:
         if not os.path.exists(received_folder):
             os.makedirs(received_folder)
         image_data = msg['message']
+        # 添加base64填充
+        padding = 4 - (len(image_data) % 4) if len(image_data) % 4 != 0 else 0
+        image_data = image_data + ('=' * padding)
+
         # 此处储存的名称应当改为可读的随机编号
         img_name = 'chat_' + str(global_state.user_id) + '_' + ''.join(
             random.choices(string.ascii_lowercase + string.digits, k=8)) + '.jpg'
         save_path = os.path.join(received_folder, img_name)
-        with open(save_path, 'wb') as img_file:
-            img_file.write(base64.b64decode(image_data))
-        msg['message'] = save_path
-        return msg
+        try:
+            with open(save_path, 'wb') as img_file:
+                img_file.write(base64.b64decode(image_data))
+            msg['message'] = save_path
+            return msg
+        except Exception as e:
+            logger.error(f"图片保存失败：{e}")
+            msg['message'] = "图片保存失败"
+            return msg
 
     async def heart_beat(self):
         while True:
@@ -266,8 +276,9 @@ class WebSocketManager:
             msg = self.json_create(0, global_state.user_id, global_state.username, message, self.now())
             self.sql.exec(
                 "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                (global_state.user_id, global_state.username, 0, message, datetime.now()))
+                (global_state.user_id, global_state.username, 0, message, datetime.fromisoformat(self.now())))
             await self.websocket.send(msg)
+            self.update_time(self.now())
             return True
         except Exception as e:
             logger.error(f"发送消息失败: {e}")
@@ -316,8 +327,13 @@ class WebSocketManager:
             if compressed_data is None:
                 return False
 
-            # 转换为base64
+            # 转换为base64并确保正确的填充
             img_data = base64.b64encode(compressed_data).decode('utf-8')
+            # 移除可能存在的填充字符
+            img_data = img_data.rstrip('=')
+            # 添加正确的填充
+            padding = 4 - (len(img_data) % 4) if len(img_data) % 4 != 0 else 0
+            img_data = img_data + ('=' * padding)
 
             msg = self.json_create(8, global_state.user_id, global_state.username, img_data, self.now())
             self.sql.exec(

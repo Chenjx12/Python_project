@@ -188,6 +188,7 @@ class WebSocketManager:
             async for message in self.websocket:
                 msg = json.loads(message)
                 logger.info(f'收到信息：{msg}')
+                self.update_time(msg['timestamp'])
                 msg['timestamp'] = datetime.fromisoformat(msg['timestamp'])
                 if msg['message'] in ['heartbeat', 'heartbeat_ack']:
                     continue
@@ -275,8 +276,9 @@ class WebSocketManager:
             msg = self.json_create(0, global_state.user_id, global_state.username, message, self.now())
             self.sql.exec(
                 "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                (global_state.user_id, global_state.username, 0, message, datetime.now()))
+                (global_state.user_id, global_state.username, 0, message, datetime.fromisoformat(self.now())))
             await self.websocket.send(msg)
+            self.update_time(self.now())
             return True
         except Exception as e:
             logger.error(f"发送消息失败: {e}")

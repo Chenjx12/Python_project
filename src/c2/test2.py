@@ -21,6 +21,7 @@ CONFIG_FILE = 'client.config'
 user_id = 0
 
 
+
 def insert_soft_breaks(text):
     return '\u200b'.join(text)
 
@@ -294,7 +295,7 @@ class GridLayoutWindow(QMainWindow):
     def send_text(self):
         text = self.text.toPlainText().strip()
         if text:
-            self.add_message(text, "text", is_sender=True)
+            self.add_message(text, "text", name=WebsocketMG.global_state.username,is_sender=True)
             # 使用 QTimer 来延迟执行异步操作
             QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_message(text)))
         self.text.clear()
@@ -304,13 +305,16 @@ class GridLayoutWindow(QMainWindow):
         is_image = mime and mime.startswith("image")
 
         if is_image:
-            self.add_message(file_path, "image", is_sender=True)
+            self.add_message(file_path, "image", name=WebsocketMG.global_state.username,is_sender=True)
             QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_image(file_path)))
         else:
-            self.add_message(file_path, "file", is_sender=True)
+            self.add_message(file_path, "file", name=WebsocketMG.global_state.username,is_sender=True)
             QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_file(file_path)))
 
-    def add_message(self, content, msg_type="text", time=0, name='me', is_sender=True):
+    def add_message(self, content, msg_type="text", time=0, name = "", is_sender=True):
+        if name == 0:
+            name = "server"
+
         bubble = MessageBubble(content, msg_type=msg_type, is_sender=is_sender)
         self.bubbles.append(bubble)
         bubble.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
@@ -385,6 +389,12 @@ class GridLayoutWindow(QMainWindow):
                     self.add_message(msg, "image", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
                 elif flag == 9:
                     self.add_message(msg, "text", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
+                elif flag == 10:
+                    pass
+                    file_path = msg
+                    new_name = name + '.png'
+                    shutil.copy2(file_path, new_name)
+                    self.updata_avatar(new_name)
             except Exception as e:
                 print(f"Error processing message: {e}")
             await asyncio.sleep(0.1)  # 添加小延迟，避免过度占用CPU
