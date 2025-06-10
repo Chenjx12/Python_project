@@ -72,6 +72,12 @@ class SqlMG():
                 timestamp DATETIME
             );
             ''')
+            self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS clients (
+                    user_id INTEGER PRIMARY KEY,
+                    route TEXT             
+            );
+            ''')
             self.conn.commit()
             logger.info('sql for client init successfully.')
         except sqlite3.Error as e:

@@ -3,7 +3,7 @@ import logging
 import mimetypes
 import os.path
 import sys
-
+import shutil
 import qasync
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QGridLayout,

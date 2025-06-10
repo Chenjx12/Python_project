@@ -117,10 +117,12 @@ class WebSocketManager:
         logger.info(f"从数据库加载了 {len(result)} 条消息")
         for row in result:
             logger.info(f"加载消息：{row}")
+            # if row['type'] == 8:
+            #     row['message'] = self.rec_pic_msg(row)
             self.message_queue.put_nowait(
-                self.json_create(row['type'], row['sender_id'], row['sender_username'], row['message'], 
-                               row['timestamp']))
-        self.message_queue.put_nowait(self.json_create(7,0,0,0,0))
+                self.json_create(row['type'], row['sender_id'], row['sender_username'], row['message'],
+                                 row['timestamp']))
+        self.message_queue.put_nowait(self.json_create(7, 0, 0, 0, 0))
 
     @staticmethod
     def update_time(timestamp):
@@ -202,10 +204,10 @@ class WebSocketManager:
                     logging.info("[系统] 离线消息同步完成。")
                 # elif msg['id'] == global_state.user_id:
                 elif msg['flag'] == 8:
+                    msg = self.rec_pic_msg(msg)
                     self.sql.exec(
                         "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
                         (msg['id'], msg['name'], msg['flag'], msg['message'], msg['timestamp']))
-                    msg = self.rec_pic_msg(msg)
                     msg['timestamp'] = msg['timestamp'].isoformat()
                     message = json.dumps(msg)
                     self.message_queue.put_nowait(message)
@@ -213,6 +215,7 @@ class WebSocketManager:
                     self.message_queue.put_nowait(message)
                 elif msg['flag'] == 10:
                     msg = self.rec_pic_msg(msg)
+
 
 
 
@@ -234,7 +237,7 @@ class WebSocketManager:
         # 添加base64填充
         padding = 4 - (len(image_data) % 4) if len(image_data) % 4 != 0 else 0
         image_data = image_data + ('=' * padding)
-        
+
         # 此处储存的名称应当改为可读的随机编号
         img_name = 'chat_' + str(global_state.user_id) + '_' + ''.join(
             random.choices(string.ascii_lowercase + string.digits, k=8)) + '.jpg'
