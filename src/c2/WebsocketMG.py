@@ -189,7 +189,11 @@ class WebSocketManager:
                 msg = json.loads(message)
                 logger.info(f'收到信息：{msg}')
                 msg['timestamp'] = datetime.fromisoformat(msg['timestamp'])
+                self.update_time(self.now())
                 if msg['message'] in ['heartbeat', 'heartbeat_ack']:
+                    continue
+                if msg['id'] == 0:
+                    self.message_queue.put_nowait(message)
                     continue
                 if msg['flag'] == 6:
                     self.sql.exec(
@@ -207,12 +211,15 @@ class WebSocketManager:
                     msg['timestamp'] = msg['timestamp'].isoformat()
                     message = json.dumps(msg)
                     self.message_queue.put_nowait(message)
-                elif msg['id'] == '0':
-                    self.message_queue.put_nowait(message)
                 elif msg['flag'] == 10:
                     msg = self.rec_pic_msg(msg, msg['name'])
                     msg['timestamp'] = msg['timestamp'].isoformat()
                     message = json.dumps(msg)
+                    self.message_queue.put_nowait(message)
+                elif msg['flag'] == 0:
+                    self.sql.exec(
+                        "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
+                        (msg['id'], msg['name'], msg['flag'], msg['message'], msg['timestamp']))
                     self.message_queue.put_nowait(message)
                 else:
                     if msg['flag'] == 8:
@@ -272,6 +279,7 @@ class WebSocketManager:
                 "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
                 (global_state.user_id, global_state.username, 0, message, current_time))
             await self.websocket.send(msg)
+            self.update_time(self.now())
             return True
         except Exception as e:
             logger.error(f"发送消息失败: {e}")
@@ -331,6 +339,7 @@ class WebSocketManager:
                     "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
                     (global_state.user_id, global_state.username, flag, image_path, datetime.now()))
             await self.websocket.send(msg)
+            self.update_time(self.now())
             return True
         except Exception as e:
             logger.error(f"发送图片失败: {e}")

@@ -233,7 +233,7 @@ class GridLayoutWindow(QMainWindow):
     def __init__(self, web):
         super().__init__()
         self.bubbles = []
-        self.setWindowTitle("三列网格布局 - 列宽定制")
+        self.setWindowTitle("TEST1")
         self.setGeometry(1100, 100, 900, 600)
         self.web = web
 
@@ -241,7 +241,7 @@ class GridLayoutWindow(QMainWindow):
         self.avatar_dir = os.path.join(os.getcwd(), "source")
         if not os.path.exists(self.avatar_dir):
             os.makedirs(self.avatar_dir)
-        self.current_avatar = os.path.join(self.avatar_dir, WebsocketMG.global_state.username,".png")
+        self.current_avatar = os.path.join(self.avatar_dir, WebsocketMG.global_state.username + ".png")
         if not os.path.exists(self.current_avatar):
             # 如果默认头像不存在，创建一个空白的默认头像
             default_avatar = QPixmap(40, 40)
@@ -451,7 +451,10 @@ class GridLayoutWindow(QMainWindow):
 
                 is_sender = container.property("is_sender")
                 name = container.property("user_name")
-                logging.info(f"消息 {i}: is_sender={is_sender}, user_id={name}")
+                logging.info(f"消息 {i}: is_sender={is_sender}, user_name={name}")
+
+                if name not in user_avatar_map:
+                    continue
 
                 for child in container.findChildren(QLabel):
                     if child.property("is_avatar"):
@@ -460,14 +463,10 @@ class GridLayoutWindow(QMainWindow):
                                 avatar_path = self.current_avatar
                                 logging.info(f"更新发送者头像: {avatar_path}")
                             else:
-                                if user_id is not None:
-                                    avatar_path = user_avatar_map.get(name)
-                                    if not avatar_path:
-                                        avatar_path = os.path.join(os.getcwd(), "source", "img.png")
-                                    logging.info(f"更新接收者头像: user_name={name}, path={avatar_path}")
-                                else:
-                                    logging.warning(f"消息 {i} 的user_id为None")
-                                    continue
+                                avatar_path = user_avatar_map.get(name)
+                                if not avatar_path:
+                                    avatar_path = os.path.join(os.getcwd(), "source", "img.png")
+                                logging.info(f"更新接收者头像: user_name={name}, path={avatar_path}")
 
                             if os.path.exists(avatar_path):
                                 pixmap = QPixmap(avatar_path)
@@ -530,17 +529,25 @@ class GridLayoutWindow(QMainWindow):
                     syn_flag = 1
                     continue
                 if flag == 0:
-                    self.add_message(msg, "text",  name=name, time=time, is_sender=is_sender)
+                    self.add_message(msg, "text", name=name, time=time, is_sender=is_sender)
                 elif flag == 8 and os.path.exists(msg):
-                    self.add_message(msg, "image",  name=name, time=time, is_sender=is_sender)
+                    self.add_message(msg, "image", name=name, time=time, is_sender=is_sender)
                 elif flag == 9:
-                    self.add_message(msg, "text",  name=name, time=time, is_sender=is_sender)
+                    self.add_message(msg, "text", name=name, time=time, is_sender=is_sender)
                 elif flag == 10:
                     file_path = msg
                     new_name = name + '.png'
-                    logging.info(f"文件路径为：{file_path}")
-                    shutil.copy2(file_path, os.path.join(os.getcwd(), "source", new_name))
-                    self.update_avatar({userid: os.path.join(os.getcwd(), "source", new_name)})
+                    target_path = os.path.join(os.getcwd(), "source", new_name)
+                    logging.info(f"源文件路径为：{file_path}")
+                    logging.info(f"目标文件路径为：{target_path}")
+
+                    # 检查源文件和目标文件是否相同
+                    if os.path.normpath(file_path) != os.path.normpath(target_path):
+                        shutil.copy2(file_path, target_path)
+                        self.update_avatar({name: target_path})
+                    else:
+                        logging.info("源文件和目标文件相同，跳过复制")
+                        self.update_avatar({name: file_path})
 
             except Exception as e:
                 print(f"Error processing message: {e}")
