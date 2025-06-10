@@ -8,7 +8,7 @@ import qasync
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QGridLayout,
     QLabel, QPushButton, QLineEdit, QHBoxLayout, QTextEdit, QVBoxLayout, QScrollArea, QSizePolicy, QLayout,
-    QMessageBox
+    QMessageBox, QFileDialog
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QPixmap
@@ -19,7 +19,6 @@ import asyncio
 CONFIG_FILE = 'client.config'
 
 user_id = 0
-
 
 
 def insert_soft_breaks(text):
@@ -238,6 +237,17 @@ class GridLayoutWindow(QMainWindow):
         self.setGeometry(1100, 100, 900, 600)
         self.web = web
 
+        # 初始化头像路径
+        self.avatar_dir = os.path.join(os.getcwd(), "source")
+        if not os.path.exists(self.avatar_dir):
+            os.makedirs(self.avatar_dir)
+        self.current_avatar = os.path.join(self.avatar_dir, WebsocketMG.global_state.username,".png")
+        if not os.path.exists(self.current_avatar):
+            # 如果默认头像不存在，创建一个空白的默认头像
+            default_avatar = QPixmap(40, 40)
+            default_avatar.fill(Qt.white)
+            default_avatar.save(self.current_avatar)
+
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
@@ -295,7 +305,7 @@ class GridLayoutWindow(QMainWindow):
     def send_text(self):
         text = self.text.toPlainText().strip()
         if text:
-            self.add_message(text, "text", name=WebsocketMG.global_state.username,is_sender=True)
+            self.add_message(text, "text", name=WebsocketMG.global_state.username, is_sender=True)
             # 使用 QTimer 来延迟执行异步操作
             QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_message(text)))
         self.text.clear()
@@ -305,32 +315,71 @@ class GridLayoutWindow(QMainWindow):
         is_image = mime and mime.startswith("image")
 
         if is_image:
-            self.add_message(file_path, "image", name=WebsocketMG.global_state.username,is_sender=True)
+            self.add_message(file_path, "image", name=WebsocketMG.global_state.username, is_sender=True)
             QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_image(file_path)))
         else:
-            self.add_message(file_path, "file", name=WebsocketMG.global_state.username,is_sender=True)
+            self.add_message(file_path, "file", name=WebsocketMG.global_state.username, is_sender=True)
             QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_file(file_path)))
 
-    def add_message(self, content, msg_type="text", time=0, name = "", is_sender=True):
+    def add_message(self, content, msg_type="text", time=0, name="", is_sender=True):
         if name == 0:
             name = "server"
 
         bubble = MessageBubble(content, msg_type=msg_type, is_sender=is_sender)
         self.bubbles.append(bubble)
         bubble.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
+
         container = QWidget()
+        container.setProperty("is_sender", is_sender)
+        container.setProperty("user_name", name)  # 设置user_id属性
+        logging.info(f"设置container属性: is_sender={is_sender}, user_name={name}")  # 调试信息
         container_layout = QHBoxLayout(container)
         container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(10)
 
+        # 头像
         avatar_label = QLabel()
-        avatar_path = os.getcwd() + "/source/img.png"
-        pixmap = QPixmap(avatar_path)
-        avatar_label.setPixmap(pixmap.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        avatar_label.setStyleSheet("border-radius: 20px;")
+        try:
+            avatar_path = self.current_avatar if is_sender else os.path.join(os.getcwd(), "source", name + '.png')
+            if not os.path.exists(avatar_path):
+                avatar_path = os.path.join(os.getcwd(), "source", "img.png")
+            pixmap = QPixmap(avatar_path)
+            if not pixmap.isNull():
+                avatar_label.setPixmap(pixmap.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            else:
+                logging.error(f"无法加载头像: {avatar_path}")
+                return
+        except Exception as e:
+            logging.error(f"设置头像时出错: {e}")
+            return
 
+        avatar_label.setStyleSheet("""
+                    QLabel {
+                        border-radius: 20px;
+                        background-color: #ffffff;
+                        padding: 2px;
+                    }
+                """)
+        avatar_label.setProperty("is_avatar", True)
+        avatar_label.setProperty("user_name", name)
+        logging.info(f"设置avatar_label属性: is_avatar=True, user_name={name}")
+
+        if is_sender:
+            avatar_label.mousePressEvent = self.change_avatar
+            avatar_label.setCursor(Qt.PointingHandCursor)
+            avatar_label.setToolTip("点击更换头像")
+
+        # 用户名
         name_label = QLabel(name)
-        name_label.setStyleSheet("color: gray; font-size: 12px;")
+        name_label.setStyleSheet("""
+                    QLabel {
+                        color: #1a1a1a;
+                        font-size: 17px;
+                        font-weight: bold;
+                        padding: 2px 0;
+                    }
+                """)
         name_label.setAlignment(Qt.AlignLeft if not is_sender else Qt.AlignRight)
 
         # 用户名 + 气泡 垂直排布
@@ -355,6 +404,86 @@ class GridLayoutWindow(QMainWindow):
             self.scroll_area.verticalScrollBar().maximum()
         )
 
+    def change_avatar(self, event):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择头像",
+            "",
+            "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif)"
+        )
+
+        if file_path:
+            try:
+                # 生成新的头像文件名
+                new_avatar_path = os.path.join(self.avatar_dir,
+                                               f"{WebsocketMG.global_state.username}.png")
+
+                # 复制并保存新头像
+                shutil.copy2(file_path, new_avatar_path)
+                self.current_avatar = new_avatar_path
+                print(self.current_avatar)
+                # 更新所有消息中的头像
+                self.update_avatar({WebsocketMG.global_state.username: self.current_avatar})
+
+                QMessageBox.information(self, "成功", "头像已更新！")
+                QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_image(self.current_avatar, 10)))
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"更新头像时出错：{str(e)}")
+                # 如果出错，恢复默认头像
+                self.current_avatar = os.path.join(os.getcwd(), "source/img.png")
+
+    def update_avatar(self, user_avatar_map: dict):
+        """
+        更新头像（可针对不同用户）
+        参数：user_avatar_map: dict，格式为 {username: avatar_path}
+        """
+        logging.info(f"开始更新头像，头像映射: {user_avatar_map}")
+
+        if not user_avatar_map:
+            logging.warning("头像映射为空")
+            return
+
+        for i in range(self.chat_area_layout.count() - 1):
+            try:
+                container = self.chat_area_layout.itemAt(i).widget()
+                if not container:
+                    continue
+
+                is_sender = container.property("is_sender")
+                name = container.property("user_name")
+                logging.info(f"消息 {i}: is_sender={is_sender}, user_id={name}")
+
+                for child in container.findChildren(QLabel):
+                    if child.property("is_avatar"):
+                        try:
+                            if is_sender:
+                                avatar_path = self.current_avatar
+                                logging.info(f"更新发送者头像: {avatar_path}")
+                            else:
+                                if user_id is not None:
+                                    avatar_path = user_avatar_map.get(name)
+                                    if not avatar_path:
+                                        avatar_path = os.path.join(os.getcwd(), "source", "img.png")
+                                    logging.info(f"更新接收者头像: user_name={name}, path={avatar_path}")
+                                else:
+                                    logging.warning(f"消息 {i} 的user_id为None")
+                                    continue
+
+                            if os.path.exists(avatar_path):
+                                pixmap = QPixmap(avatar_path)
+                                if not pixmap.isNull():
+                                    child.setPixmap(pixmap.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                                    logging.info(f"成功更新头像: {avatar_path}")
+                                else:
+                                    logging.error(f"无法加载头像图片: {avatar_path}")
+                            else:
+                                logging.error(f"头像文件不存在: {avatar_path}")
+                        except Exception as e:
+                            logging.error(f"更新头像时出错: {e}")
+            except Exception as e:
+                logging.error(f"处理消息 {i} 时出错: {e}")
+                continue
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         max_bubble_width = int(self.width() * 0.6)
@@ -376,25 +505,43 @@ class GridLayoutWindow(QMainWindow):
                 name = data['name']
                 flag = data['flag']
                 time = data['timestamp']
-
+                userid = data['id']
                 if WebsocketMG.global_state.user_id == data['id'] and syn_flag:
                     continue
-                #对离线消息同步过程中需要把自身信息进行识别
+                is_sender = WebsocketMG.global_state.user_id == data['id']
+                # 对离线消息同步过程中需要把自身信息进行识别
+                # if flag == 7:
+                #     syn_flag = 1
+                #     continue
+                # if flag == 0:
+                #     self.add_message(msg, "text", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
+                # elif flag == 8 and os.path.exists(msg):
+                #     self.add_message(msg, "image", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
+                # elif flag == 9:
+                #     self.add_message(msg, "text", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
+                # elif flag == 10:
+                #     pass
+                #     file_path = msg
+                #     new_name = name + '.png'
+                #     shutil.copy2(file_path, new_name)
+                #     self.updata_avatar(new_name)
+
                 if flag == 7:
                     syn_flag = 1
                     continue
                 if flag == 0:
-                    self.add_message(msg, "text", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
+                    self.add_message(msg, "text",  name=name, time=time, is_sender=is_sender)
                 elif flag == 8 and os.path.exists(msg):
-                    self.add_message(msg, "image", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
+                    self.add_message(msg, "image",  name=name, time=time, is_sender=is_sender)
                 elif flag == 9:
-                    self.add_message(msg, "text", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
+                    self.add_message(msg, "text",  name=name, time=time, is_sender=is_sender)
                 elif flag == 10:
-                    pass
                     file_path = msg
                     new_name = name + '.png'
-                    shutil.copy2(file_path, new_name)
-                    self.updata_avatar(new_name)
+                    logging.info(f"文件路径为：{file_path}")
+                    shutil.copy2(file_path, os.path.join(os.getcwd(), "source", new_name))
+                    self.update_avatar({userid: os.path.join(os.getcwd(), "source", new_name)})
+
             except Exception as e:
                 print(f"Error processing message: {e}")
             await asyncio.sleep(0.1)  # 添加小延迟，避免过度占用CPU

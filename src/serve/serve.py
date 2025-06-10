@@ -8,6 +8,9 @@ from datetime import datetime
 import os
 import hashlib
 import ssl
+import io
+from PIL import Image
+
 from sqlmg import SqlMG
 
 # 配置日志
@@ -16,6 +19,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # 消息大小限制（10MB）
 MAX_MESSAGE_SIZE = 10 * 1024 * 1024
 
+MAX_IMAGE_SIZE = (1920, 1080)
+
+IMAGE_QUALITY = 85
 # ssl证书
 current_dir = os.path.dirname(os.path.abspath(__file__))
 cert_path = os.path.join(current_dir, 'serve_source', 'cert.pem')
@@ -53,6 +59,34 @@ def json_create(flag, id, name, message, times):
         "timestamp": times
     }
     return json.dumps(msg)
+
+def compress_image(image_path):
+    """压缩图片"""
+    try:
+        # 打开图片
+        with Image.open(image_path) as img:
+            # 转换为RGB模式（如果是RGBA，去除透明通道）
+            if img.mode in ('RGBA', 'P'):
+                img = img.convert('RGB')
+
+            # 调整图片大小
+            if img.size[0] > MAX_IMAGE_SIZE[0] or img.size[1] > MAX_IMAGE_SIZE[1]:
+                img.thumbnail(MAX_IMAGE_SIZE, Image.Resampling.LANCZOS)
+
+                # 保存到内存中
+            output = io.BytesIO()
+            img.save(output, format='JPEG', quality=IMAGE_QUALITY, optimize=True)
+            compressed_data = output.getvalue()
+
+            # 检查压缩后的大小
+            if len(compressed_data) > MAX_MESSAGE_SIZE:
+                logging.error(f"图片压缩后仍然超过大小限制: {len(compressed_data)} bytes > {MAX_MESSAGE_SIZE} bytes")
+                return None
+
+            return compressed_data
+    except Exception as e:
+        logging.error(f"压缩图片时出错: {e}")
+        return None
 
 def pic_msg(msg, user_id):
     """处理图片消息"""
@@ -177,7 +211,9 @@ async def handler(websocket):
                         await websocket.send(json_create(2, user_id, username, 'REGISTERED_FAIL', now()))
                         logging.info(f"注册请求失败")
 
-
+                elif flag == 10 and user_id is not None:
+                    sender_username = msg['name']
+                    await broadcast(user_id, sender_username, msg['message'], 10)
                 elif flag == 5 and user_id is not None:  # 同步离线消息
                     await refresh_msg(user_id, msg['message'], websocket)
 
@@ -197,8 +233,6 @@ async def handler(websocket):
                     # 广播图片消息给所有客户端
                     await broadcast(user_id, sender_username, img_data, 8)
 
-
-
                 else:
                     logging.warning(f"未知 flag：{flag}")
 
@@ -210,7 +244,7 @@ async def handler(websocket):
             client_heartbeats.pop(user_id, None)
             logging.info(f"已将客户端从连接列表中移除 (用户ID：{user_id})")
 
-async def broadcast(sender_user_id, sender_username, message, flag=0):
+async def broadcast(sender_user_id, sender_username, message, flag = 0):
     """广播消息给所有已连接的客户端"""
     for user_id, client in connected_clients.items():
         if user_id == sender_user_id:
@@ -222,7 +256,7 @@ async def broadcast(sender_user_id, sender_username, message, flag=0):
         elif flag == 1:
             msg = json_create(0, 0, 0, message, now())
             await client.send(msg)
-        elif flag == 8:
+        elif flag == 8 or flag == 10:
             msg = json_create(flag, sender_user_id, sender_username, message, now())
             await client.send(msg)
             logging.info(f"向客户端 {user_id} 广播图片消息")
@@ -246,6 +280,9 @@ async def refresh_msg(user_id, last_time, websocket):
         message = row['message']
         timestamp = row['timestamp']
         flag = row['type']
+        if flag == 8:
+            message = compress_image(message)
+            message = base64.b64encode(message).decode('utf-8')
         msg = json_create(flag, sender_id, sender_name, message, timestamp)
         await websocket.send(msg)
 
