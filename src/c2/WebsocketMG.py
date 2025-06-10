@@ -4,11 +4,13 @@ import json
 import base64
 import os
 import ssl
+import string
 from datetime import datetime
 from sqlmg import SqlMG
 import websockets
 from PIL import Image
 import io
+import random
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -51,6 +53,9 @@ class WebSocketManager:
 
     @staticmethod
     def json_create(flag, id, name, message, times):
+        # 如果times是datetime对象，转换为isoformat字符串
+        if isinstance(times, datetime):
+            times = times.isoformat()
         msg = {
             "flag": flag,
             "id": id,
@@ -67,29 +72,55 @@ class WebSocketManager:
     async def refresh_message(self):
         """同步离线信息"""
         if not os.path.exists(CONFIG_FILE):
+            logger.info("配置文件不存在，跳过同步")
             return
         with open(CONFIG_FILE, 'r') as f:
             config = json.load(f)
         time = config.get('time', -1)
         if time == -1:
+            logger.info("时间戳为-1，跳过同步")
+            self.update_time(self.now())
             return
-        await self.websocket.send(self.json_create(5, global_state.user_id, 0, time, 0))
-        async for msg in self.websocket:
-            rcv = json.loads(msg)
-            if rcv['message'] == "sync_complete":
-                break
-            elif rcv['message'] == "heartbeat":
-                continue
-            if rcv['flag'] == 0:
-                self.sql.exec(
-                    "INSERT INTO messages(sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                    (rcv['id'], rcv['name'], rcv['flag'], rcv['message'], rcv['timestamp']))
-            elif rcv['flag'] == 8:
-                rcv = self.rec_pic_msg(rcv)
-                self.sql.exec(
-                    "INSERT INTO messages(sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                    (rcv['id'], rcv['name'], rcv['flag'], rcv['message'], rcv['timestamp']))
+        logger.info(f"开始请求同步，上次同步时间：{time}")
+        try:
+            await self.websocket.send(self.json_create(5, global_state.user_id, 0, time, 0))
+            logger.info("同步请求已发送")
+            async for msg in self.websocket:
+                rcv = json.loads(msg)
+                rcv['timestamp'] = datetime.fromisoformat(rcv['timestamp'])
+                logger.info(f"收到同步消息：{rcv}")
+                if rcv['message'] == "sync_complete":
+                    logger.info("同步完成")
+                    break
+                elif rcv['message'] == "heartbeat":
+                    continue
+                if rcv['flag'] == 0:
+                    self.sql.exec(
+                        "INSERT INTO messages(sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
+                        (rcv['id'], rcv['name'], rcv['flag'], rcv['message'], rcv['timestamp']))
+                elif rcv['flag'] == 8:
+                    rcv = self.rec_pic_msg(rcv)
+                    self.sql.exec(
+                        "INSERT INTO messages(sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
+                        (rcv['id'], rcv['name'], rcv['flag'], rcv['message'], rcv['timestamp']))
+        except Exception as e:
+            logger.error(f"同步过程中发生错误：{e}")
+            # return
         self.update_time(self.now())
+        logger.info("时间戳已更新")
+        time = datetime.fromisoformat(time)
+        result = self.sql.fetch("""
+                SELECT sender_id, sender_username, message, timestamp, type
+                FROM messages
+                ORDER BY timestamp
+            """, )
+        logger.info(f"从数据库加载了 {len(result)} 条消息")
+        for row in result:
+            logger.info(f"加载消息：{row}")
+            self.message_queue.put_nowait(
+                self.json_create(row['type'], row['sender_id'], row['sender_username'], row['message'],
+                               row['timestamp']))
+        self.message_queue.put_nowait(self.json_create(7,0,0,0,0))
 
     @staticmethod
     def update_time(timestamp):
@@ -128,19 +159,26 @@ class WebSocketManager:
         response = json.loads(response)
         if response['message'] == "LOGIN_SUCCESS":
             logger.info("Login successful")
-            await self.refresh_message()
+            # 先进行消息同步
+            try:
+                await self.refresh_message()
+                # 同步成功后再启动其他任务
+                self.is_connected = True
+                asyncio.create_task(self.receive_messages())
+                asyncio.create_task(self.heart_beat())
+            except Exception as e:
+                logger.error(f"同步失败：{e}")
+                return False
         else:
             logger.error("Invalid user ID or password")
             return False
 
-        self.is_connected = True
-        asyncio.create_task(self.receive_messages())
-        asyncio.create_task(self.heart_beat())
         return True
 
     def load_message_from_db(self):
         all_load = self.sql.fetch("SELECT sender_id, sender_username, message, timestamp, type FROM messages ")
         for row in all_load:
+            logger.info(f"加载历史消息：{row}")
             msg = self.json_create(row['type'], row['sender_id'], row['sender_username'], row['message'],
                                    row['timestamp'])
             self.message_queue.put_nowait(msg)
@@ -150,6 +188,7 @@ class WebSocketManager:
             async for message in self.websocket:
                 msg = json.loads(message)
                 logger.info(f'收到信息：{msg}')
+                msg['timestamp'] = datetime.fromisoformat(msg['timestamp'])
                 if msg['message'] in ['heartbeat', 'heartbeat_ack']:
                     continue
                 if msg['flag'] == 6:
@@ -160,16 +199,22 @@ class WebSocketManager:
                 elif msg['flag'] == 7:
                     self.update_time(msg['timestamp'])
                     logging.info("[系统] 离线消息同步完成。")
-                elif msg['id'] == global_state.user_id:
-                    if msg['flag'] == 8:
-                        self.sql.exec(
-                            "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                            (msg['id'], msg['name'], msg['flag'], msg['message'], msg['timestamp']))
-                        msg = self.rec_pic_msg(msg)
-                        message = json.dumps(msg)
+                # elif msg['id'] == global_state.user_id:
+                elif msg['flag'] == 8:
+                    self.sql.exec(
+                        "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
+                        (msg['id'], msg['name'], msg['flag'], msg['message'], msg['timestamp']))
+                    msg = self.rec_pic_msg(msg)
+                    msg['timestamp'] = msg['timestamp'].isoformat()
+                    message = json.dumps(msg)
                     self.message_queue.put_nowait(message)
                 elif msg['id'] == '0':
                     self.message_queue.put_nowait(message)
+                elif msg['flag'] == 10:
+                    msg = self.rec_pic_msg(msg)
+
+
+
                 else:
                     if msg['flag'] == 8:
                         msg = self.rec_pic_msg(msg)
@@ -185,7 +230,9 @@ class WebSocketManager:
         if not os.path.exists(received_folder):
             os.makedirs(received_folder)
         image_data = msg['message']
-        img_name = os.path.basename(image_data)
+        # 此处储存的名称应当改为可读的随机编号
+        img_name = 'chat_' + global_state.user_id + '_' + ''.join(
+            random.choices(string.ascii_lowercase + string.digits, k=8)) + '.jpg'
         save_path = os.path.join(received_folder, img_name)
         with open(save_path, 'wb') as img_file:
             img_file.write(base64.b64decode(image_data))
@@ -219,7 +266,7 @@ class WebSocketManager:
             msg = self.json_create(0, global_state.user_id, global_state.username, message, self.now())
             self.sql.exec(
                 "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                (global_state.user_id, global_state.username, 0, message, self.now()))
+                (global_state.user_id, global_state.username, 0, message, datetime.now()))
             await self.websocket.send(msg)
             return True
         except Exception as e:
@@ -275,7 +322,7 @@ class WebSocketManager:
             msg = self.json_create(8, global_state.user_id, global_state.username, img_data, self.now())
             self.sql.exec(
                 "INSERT INTO messages (sender_id, sender_username, type, message, timestamp) VALUES (?,?,?,?,?)",
-                (global_state.user_id, global_state.username, 8, image_path, self.now()))
+                (global_state.user_id, global_state.username, 8, image_path, datetime.now()))
             await self.websocket.send(msg)
             return True
         except Exception as e:

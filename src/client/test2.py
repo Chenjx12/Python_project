@@ -1,4 +1,5 @@
 import json
+import logging
 import mimetypes
 import os.path
 import sys
@@ -18,6 +19,7 @@ import asyncio
 CONFIG_FILE = 'client.config'
 
 user_id = 0
+
 
 
 def insert_soft_breaks(text):
@@ -86,6 +88,7 @@ class LoginWindow(QWidget):
             id_ = 0
         success = await self.ws_manager.connect_ws(id_, username=username, password=password)
         if success:
+            logging.info("---准备启动主窗口---")
             await asyncio.sleep(0.1)
             self.open_main_window()
         else:
@@ -94,6 +97,8 @@ class LoginWindow(QWidget):
     def open_main_window(self):
         self.main_window = GridLayoutWindow(self.ws_manager)
         self.main_window.show()
+        # QTimer.singleShot(0, lambda: asyncio.create_task(self.ws_manager.refresh_message()))
+        # self.ws_manager.refresh_message()
         self.close()  # 关闭登录窗口
 
     def config_empty(self, file_path):
@@ -290,7 +295,7 @@ class GridLayoutWindow(QMainWindow):
     def send_text(self):
         text = self.text.toPlainText().strip()
         if text:
-            self.add_message(text, "text", is_sender=True)
+            self.add_message(text, "text", name=WebsocketMG.global_state.username,is_sender=True)
             # 使用 QTimer 来延迟执行异步操作
             QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_message(text)))
         self.text.clear()
@@ -300,13 +305,16 @@ class GridLayoutWindow(QMainWindow):
         is_image = mime and mime.startswith("image")
 
         if is_image:
-            self.add_message(file_path, "image", is_sender=True)
+            self.add_message(file_path, "image", name=WebsocketMG.global_state.username,is_sender=True)
             QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_image(file_path)))
         else:
-            self.add_message(file_path, "file", is_sender=True)
+            self.add_message(file_path, "file", name=WebsocketMG.global_state.username,is_sender=True)
             QTimer.singleShot(0, lambda: asyncio.create_task(self.web.send_file(file_path)))
 
-    def add_message(self, content, msg_type="text", time=0, name='me', is_sender=True):
+    def add_message(self, content, msg_type="text", time=0, name = "", is_sender=True):
+        if name == 0:
+            name = "server"
+
         bubble = MessageBubble(content, msg_type=msg_type, is_sender=is_sender)
         self.bubbles.append(bubble)
         bubble.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
@@ -354,6 +362,7 @@ class GridLayoutWindow(QMainWindow):
             bubble.adjust_bubble_width(max_bubble_width)
 
     async def listen_messages(self):
+        syn_flag = 0
         while True:
             try:
                 if not self.web.is_connected:
@@ -361,21 +370,31 @@ class GridLayoutWindow(QMainWindow):
                     continue
 
                 mess = await self.web.message_queue.get()
+                logging.info(f"前端消息队列输出：{mess}")
                 data = json.loads(mess)
                 msg = data['message']
                 name = data['name']
                 flag = data['flag']
                 time = data['timestamp']
 
-                if WebsocketMG.global_state.user_id == data['id']:
+                if WebsocketMG.global_state.user_id == data['id'] and syn_flag:
                     continue
-
+                #对离线消息同步过程中需要把自身信息进行识别
+                if flag == 7:
+                    syn_flag = 1
+                    continue
                 if flag == 0:
-                    self.add_message(msg, "text", name=name, time=time, is_sender=False)
+                    self.add_message(msg, "text", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
                 elif flag == 8 and os.path.exists(msg):
-                    self.add_message(msg, "image", name=name, time=time, is_sender=False)
+                    self.add_message(msg, "image", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
                 elif flag == 9:
-                    self.add_message(msg, "text", name=name, time=time, is_sender=False)
+                    self.add_message(msg, "text", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
+                elif flag == 10:
+                    pass
+                    file_path = msg
+                    new_name = name + '.png'
+                    shutil.copy2(file_path, new_name)
+                    self.updata_avatar(new_name)
             except Exception as e:
                 print(f"Error processing message: {e}")
             await asyncio.sleep(0.1)  # 添加小延迟，避免过度占用CPU

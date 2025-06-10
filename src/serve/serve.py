@@ -114,10 +114,10 @@ def now():
     return datetime.now().replace(microsecond=0).isoformat()
 
 # 存储消息记录
-def store_message(sender_id, sender_username, message):
+def store_message(message):
     """存储消息记录"""
-    sql.exec("INSERT INTO messages (sender_id, sender_username, message, timestamp) VALUES (?, ?, ?, datetime('now','localtime'))",
-             (sender_id, sender_username, message))
+    sql.exec("INSERT INTO messages (sender_id, sender_username, message, timestamp, type) VALUES (?, ?, ?, ?, ?)",
+             ( message['id'], message['name'], message['message'], datetime.fromisoformat(message['timestamp']), message['flag']))
 
 
 # 定期向客户端发送心跳包
@@ -183,17 +183,21 @@ async def handler(websocket):
 
                 elif flag == 0 and user_id is not None:  # 普通消息
                     sender_username = msg['name']
-                    store_message(user_id, sender_username, msg['message'])
+                    store_message(msg)
                     await broadcast(user_id, sender_username, msg['message'])
 
                 # 处理图片消息
                 elif flag == 8 and user_id is not None:  # 图片消息
                     image_path = pic_msg(msg, user_id)
+                    msg['message'] = image_path
                     sender_username = msg['name']
                     # 将图片路径存入数据库
-                    store_message(user_id, sender_username, image_path)
+                    store_message(msg)
                     # 广播图片消息给所有客户端
                     await broadcast(user_id, sender_username, f"{msg['message']}", 8)
+
+
+
                 else:
                     logging.warning(f"未知 flag：{flag}")
 
@@ -213,7 +217,7 @@ async def broadcast(sender_user_id, sender_username, message, flag=0):
             await client.send(msg)
             logging.info(f"向客户端 {user_id} 广播消息：{msg}")
         elif flag == 1:
-            msg = json_create(flag, 0, 0, message, now())
+            msg = json_create(0, 0, 0, message, now())
             await client.send(msg)
         elif flag == 8:
             msg = json_create(flag, sender_user_id, sender_username, message, now())
@@ -227,7 +231,7 @@ async def refresh_msg(user_id, last_time, websocket):
 
     logging.info(f"开始向客户端 {user_id} 同步离线消息，自 {last_time}")
     result = sql.fetch("""
-        SELECT sender_id, sender_username, message, timestamp 
+        SELECT sender_id, sender_username, message, timestamp, type 
         FROM messages 
         WHERE timestamp >= ? 
         ORDER BY timestamp
@@ -238,7 +242,8 @@ async def refresh_msg(user_id, last_time, websocket):
         sender_name = row['sender_username']
         message = row['message']
         timestamp = row['timestamp']
-        msg = json_create(6, sender_id, sender_name, message, timestamp)
+        flag = row['type']
+        msg = json_create(flag, sender_id, sender_name, message, timestamp)
         await websocket.send(msg)
 
     await websocket.send(json_create(7, 0, "server", "sync_complete", now()))

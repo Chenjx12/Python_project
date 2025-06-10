@@ -1,4 +1,5 @@
 import json
+import logging
 import mimetypes
 import os.path
 import sys
@@ -86,6 +87,7 @@ class LoginWindow(QWidget):
             id_ = 0
         success = await self.ws_manager.connect_ws(id_, username=username, password=password)
         if success:
+            logging.info("---准备启动主窗口---")
             await asyncio.sleep(0.1)
             self.open_main_window()
         else:
@@ -94,6 +96,8 @@ class LoginWindow(QWidget):
     def open_main_window(self):
         self.main_window = GridLayoutWindow(self.ws_manager)
         self.main_window.show()
+        # QTimer.singleShot(0, lambda: asyncio.create_task(self.ws_manager.refresh_message()))
+        # self.ws_manager.refresh_message()
         self.close()  # 关闭登录窗口
 
     def config_empty(self, file_path):
@@ -354,6 +358,7 @@ class GridLayoutWindow(QMainWindow):
             bubble.adjust_bubble_width(max_bubble_width)
 
     async def listen_messages(self):
+        syn_flag = 0
         while True:
             try:
                 if not self.web.is_connected:
@@ -361,21 +366,25 @@ class GridLayoutWindow(QMainWindow):
                     continue
 
                 mess = await self.web.message_queue.get()
+                logging.info(f"前端消息队列输出：{mess}")
                 data = json.loads(mess)
                 msg = data['message']
                 name = data['name']
                 flag = data['flag']
                 time = data['timestamp']
 
-                if WebsocketMG.global_state.user_id == data['id']:
+                if WebsocketMG.global_state.user_id == data['id'] and syn_flag:
                     continue
-
+                #对离线消息同步过程中需要把自身信息进行识别
+                if flag == 7:
+                    syn_flag = 1
+                    continue
                 if flag == 0:
-                    self.add_message(msg, "text", name=name, time=time, is_sender=False)
+                    self.add_message(msg, "text", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
                 elif flag == 8 and os.path.exists(msg):
-                    self.add_message(msg, "image", name=name, time=time, is_sender=False)
+                    self.add_message(msg, "image", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
                 elif flag == 9:
-                    self.add_message(msg, "text", name=name, time=time, is_sender=False)
+                    self.add_message(msg, "text", name=name, time=time, is_sender= WebsocketMG.global_state.user_id == data['id'])
             except Exception as e:
                 print(f"Error processing message: {e}")
             await asyncio.sleep(0.1)  # 添加小延迟，避免过度占用CPU
