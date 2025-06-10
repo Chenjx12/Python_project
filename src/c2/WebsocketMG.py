@@ -231,7 +231,7 @@ class WebSocketManager:
             os.makedirs(received_folder)
         image_data = msg['message']
         # 此处储存的名称应当改为可读的随机编号
-        img_name = 'chat_' + global_state.user_id + '_' + ''.join(
+        img_name = 'chat_' + str(global_state.user_id) + '_' + ''.join(
             random.choices(string.ascii_lowercase + string.digits, k=8)) + '.jpg'
         save_path = os.path.join(received_folder, img_name)
         with open(save_path, 'wb') as img_file:

@@ -230,14 +230,23 @@ class WebSocketManager:
         if not os.path.exists(received_folder):
             os.makedirs(received_folder)
         image_data = msg['message']
+        # 添加base64填充
+        padding = 4 - (len(image_data) % 4) if len(image_data) % 4 != 0 else 0
+        image_data = image_data + ('=' * padding)
+        
         # 此处储存的名称应当改为可读的随机编号
-        img_name = 'chat_' + global_state.user_id + '_' + ''.join(
+        img_name = 'chat_' + str(global_state.user_id) + '_' + ''.join(
             random.choices(string.ascii_lowercase + string.digits, k=8)) + '.jpg'
         save_path = os.path.join(received_folder, img_name)
-        with open(save_path, 'wb') as img_file:
-            img_file.write(base64.b64decode(image_data))
-        msg['message'] = save_path
-        return msg
+        try:
+            with open(save_path, 'wb') as img_file:
+                img_file.write(base64.b64decode(image_data))
+            msg['message'] = save_path
+            return msg
+        except Exception as e:
+            logger.error(f"图片保存失败：{e}")
+            msg['message'] = "图片保存失败"
+            return msg
 
     async def heart_beat(self):
         while True:
@@ -316,8 +325,13 @@ class WebSocketManager:
             if compressed_data is None:
                 return False
 
-            # 转换为base64
+            # 转换为base64并确保正确的填充
             img_data = base64.b64encode(compressed_data).decode('utf-8')
+            # 移除可能存在的填充字符
+            img_data = img_data.rstrip('=')
+            # 添加正确的填充
+            padding = 4 - (len(img_data) % 4) if len(img_data) % 4 != 0 else 0
+            img_data = img_data + ('=' * padding)
 
             msg = self.json_create(8, global_state.user_id, global_state.username, img_data, self.now())
             self.sql.exec(
