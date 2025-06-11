@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QFileDialog
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
-from PyQt5.QtGui import QFont, QPixmap
+from PyQt5.QtGui import QFont, QPixmap, QIcon
 import humanize
 import WebsocketMG
 import asyncio
@@ -25,7 +25,107 @@ def insert_soft_breaks(text):
     return '\u200b'.join(text)
 
 
-class LoginWindow(QWidget):
+class CustomTitleBar(QWidget):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.setFixedHeight(40)
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #2c2c2c;
+                color: white;
+            }
+            QLabel {
+                color: white;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton {
+                background-color: transparent;
+                color: white;
+                border: none;
+                font-size: 16px;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+                color: #333333;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(0)
+
+        # 标题
+        self.title_label = QLabel(parent.windowTitle())
+        self.title_label.setStyleSheet("""
+            QLabel {
+                color: white;
+                font-size: 16px;
+                font-weight: bold;
+                background-color: transparent;
+            }
+        """)
+
+        # 控制按钮
+        self.min_button = QPushButton("—")
+        self.close_button = QPushButton("×")
+
+        for button in [self.min_button, self.close_button]:
+            button.setFixedSize(30, 30)
+
+        self.min_button.clicked.connect(parent.showMinimized)
+        self.close_button.clicked.connect(parent.close)
+
+        layout.addWidget(self.title_label)
+        layout.addStretch()
+        layout.addWidget(self.min_button)
+        layout.addWidget(self.close_button)
+
+        self.old_pos = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.old_pos = event.globalPos()
+
+    def mouseMoveEvent(self, event):
+        if self.old_pos:
+            delta = event.globalPos() - self.old_pos
+            self.parent.move(self.parent.pos() + delta)
+            self.old_pos = event.globalPos()
+
+    def mouseReleaseEvent(self, event):
+        self.old_pos = None
+
+
+class CustomWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setWindowIcon(QIcon())
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: white;
+                border: 1px solid #cccccc;
+            }
+        """)
+        
+        # 创建标题栏
+        self.title_bar = CustomTitleBar(self)
+        
+        # 创建中央窗口
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        
+        # 主布局
+        self.main_layout = QVBoxLayout(self.central_widget)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+        self.main_layout.addWidget(self.title_bar)
+
+
+class LoginWindow(CustomWindow):
     def __init__(self):
         super().__init__()
         self.ws_manager = WebsocketMG.WebSocketManager()
@@ -33,34 +133,89 @@ class LoginWindow(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        self.setWindowTitle("用户登录")
-        self.setFixedSize(300, 200)
-
-        font = QFont()
-        font.setPointSize(11)
-
+        self.setWindowTitle("登录")
+        self.setFixedSize(400, 600)
+        
+        # 创建登录表单容器
+        login_container = QWidget()
+        login_container.setStyleSheet("""
+            QWidget {
+                background-color: white;
+            }
+            QLabel {
+                font-size: 16px;
+                color: #333333;
+            }
+            QLineEdit {
+                font-size: 16px;
+                padding: 10px;
+                border: 1px solid #cccccc;
+                border-radius: 5px;
+                background-color: #f5f5f5;
+            }
+            QPushButton {
+                font-size: 16px;
+                padding: 10px 20px;
+                background-color: #07C160;
+                color: white;
+                border: none;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+                color: #333333;
+            }
+        """)
+        
+        layout = QVBoxLayout(login_container)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        
+        # 标题
+        title_label = QLabel("欢迎登录")
+        title_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #333333;")
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+        
+        # 添加弹性空间，将输入框推到底部
+        layout.addStretch()
+        
+        # 创建输入框容器
+        input_container = QWidget()
+        input_layout = QVBoxLayout(input_container)
+        input_layout.setSpacing(30)
+        
+        # 用户名输入
         self.label_username = QLabel("用户名:")
         self.input_username = QLineEdit()
         self.input_username.setPlaceholderText("请输入用户名")
-
+        self.input_username.setMinimumHeight(45)
+        
+        # 密码输入
         self.label_password = QLabel("密码:")
         self.input_password = QLineEdit()
         self.input_password.setPlaceholderText("请输入密码")
         self.input_password.setEchoMode(QLineEdit.Password)
+        self.input_password.setMinimumHeight(45)
         self.input_password.returnPressed.connect(self.handle_login)
-
+        
+        # 登录按钮
         self.login_button = QPushButton("登录")
+        self.login_button.setMinimumHeight(50)
         self.login_button.clicked.connect(self.handle_login)
         self.input_username.returnPressed.connect(self.focus_password)
-        layout = QVBoxLayout()
-        layout.addWidget(self.label_username)
-        layout.addWidget(self.input_username)
-        layout.addWidget(self.label_password)
-        layout.addWidget(self.input_password)
-        layout.addStretch()
-        layout.addWidget(self.login_button)
-
-        self.setLayout(layout)
+        
+        input_layout.addWidget(self.label_username)
+        input_layout.addWidget(self.input_username)
+        input_layout.addWidget(self.label_password)
+        input_layout.addWidget(self.input_password)
+        input_layout.addWidget(self.login_button)
+        
+        # 将输入框容器添加到主布局
+        layout.addWidget(input_container)
+        
+        self.main_layout.addWidget(login_container)
+        
         file_path = os.path.join(os.getcwd(), CONFIG_FILE)
         print(file_path)
         if not self.config_empty(file_path):
@@ -229,11 +384,11 @@ class SendOnEnterTextEdit(QTextEdit):
                     self.file_dropped.emit(local_path)
 
 
-class GridLayoutWindow(QMainWindow):
+class GridLayoutWindow(CustomWindow):
     def __init__(self, web):
         super().__init__()
         self.bubbles = []
-        self.setWindowTitle("TEST1")
+        self.setWindowTitle("聊天室")
         self.setGeometry(1100, 100, 900, 600)
         self.web = web
 
@@ -243,26 +398,52 @@ class GridLayoutWindow(QMainWindow):
             os.makedirs(self.avatar_dir)
         self.current_avatar = os.path.join(self.avatar_dir, WebsocketMG.global_state.username + ".png")
         if not os.path.exists(self.current_avatar):
-            # 如果默认头像不存在，创建一个空白的默认头像
             default_avatar = QPixmap(40, 40)
             default_avatar.fill(Qt.white)
             default_avatar.save(self.current_avatar)
 
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        # 创建主容器
+        main_container = QWidget()
+        main_container.setStyleSheet("""
+            QWidget {
+                background-color: #f5f5f5;
+            }
+            QTextEdit {
+                font-size: 16px;
+                padding: 10px;
+                border: 1px solid #cccccc;
+                border-radius: 5px;
+                background-color: white;
+            }
+            QPushButton {
+                font-size: 16px;
+                padding: 10px 20px;
+                background-color: #07C160;
+                color: white;
+                border: none;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+                color: #333333;
+            }
+        """)
 
-        main_grid = QGridLayout(central_widget)
+        main_grid = QGridLayout(main_container)
         main_grid.setSpacing(15)
-        main_grid.setContentsMargins(0, 0, 0, 20)
+        main_grid.setContentsMargins(20, 20, 20, 20)
 
         self.text = SendOnEnterTextEdit(send_callback=self.send_text)
         self.text.file_dropped.connect(self.send_file)
         self.text.setAlignment(Qt.AlignLeft)
         self.text.setStyleSheet("""
-            background-color: transparent;
-            color: black;
-            padding: 15px;
-            border-radius: 8px;
+            QTextEdit {
+                background-color: white;
+                color: #333333;
+                padding: 15px;
+                border-radius: 8px;
+                font-size: 16px;
+            }
         """)
         self.text.setFixedHeight(int(self.height() * 0.15))
         main_grid.addWidget(self.text, 8, 0, 1, 4)
@@ -271,21 +452,45 @@ class GridLayoutWindow(QMainWindow):
         self.button.clicked.connect(self.send_text)
         self.button.setStyleSheet("""
             QPushButton {
-                background-color: #E5E5EA;
+                background-color: #07C160;
+                color: white;
                 border: none;
-                color: black;
+                border-radius: 5px;
+                font-size: 16px;
+                padding: 10px 20px;
             }
             QPushButton:hover {
-                border: 1px solid #0078D7;
-                border-radius: 4px;
+                background-color: #e0e0e0;
+                color: #333333;
             }
         """)
         self.button.setFixedHeight(45)
-        self.button.setFixedWidth(80)
-        main_grid.addWidget(self.button, 9, 3, Qt.AlignCenter)
+        self.button.setFixedWidth(100)
+        main_grid.addWidget(self.button, 9, 3, Qt.AlignRight)
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #f0f0f0;
+                width: 10px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #c0c0c0;
+                min-height: 20px;
+                border-radius: 5px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+        
         self.chat_area_widget = QWidget()
         self.chat_area_layout = QVBoxLayout(self.chat_area_widget)
         self.chat_area_layout.setSizeConstraint(QLayout.SetMinAndMaxSize)
@@ -298,6 +503,8 @@ class GridLayoutWindow(QMainWindow):
         main_grid.setRowStretch(8, 0)
         main_grid.setRowStretch(9, 0)
         self.scroll_area.setMinimumHeight(200)
+
+        self.main_layout.addWidget(main_container)
 
         if web:
             asyncio.create_task(self.listen_messages())
